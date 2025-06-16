@@ -1,0 +1,19 @@
+pandas>=1.5.0
+numpy>=1.21.0
+textblob>=0.17.1
+python-dateutil>=2.8.0
+requests>=2.25.0
+scipy>=1.9.0
+seaborn>=0.11.0
+matplotlib>=3.5.0
+
+# Web interface dependencies
+streamlit>=1.28.0
+plotly>=5.0.0
+
+# File handling for uploads
+zipfile36>=0.1.3  # Better zip handling (optional, built-in zipfile is sufficient)
+
+# Optional dependencies:
+# openai>=0.28.0  # For OpenAI LLM support
+# ollama  # For Ollama local LLM support
