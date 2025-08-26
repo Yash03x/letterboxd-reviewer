@@ -15,7 +15,11 @@ from dataclasses import dataclass
 from datetime import datetime
 from collections import defaultdict
 from textblob import TextBlob
+from scipy import stats
+import plotly.graph_objects as go
+import plotly.express as px
 
+from backend.config import settings, prompts
 
 @dataclass
 class ProfileData:
@@ -42,15 +46,15 @@ class LocalLLMInterface:
     """Interface for local LLM services (Ollama/LM Studio)"""
     
     def __init__(self):
-        self.ollama_url = "http://localhost:11434/api/generate"
-        self.lm_studio_url = "http://localhost:1234/v1/chat/completions"
+        self.ollama_url = settings.OLLAMA_URL
+        self.lm_studio_url = settings.LM_STUDIO_URL
         self.available_service = self._detect_service()
     
     def _detect_service(self):
         """Detect which local LLM service is available"""
         # Try Ollama first
         try:
-            response = requests.get("http://localhost:11434/api/tags", timeout=2)
+            response = requests.get(settings.OLLAMA_API_TAGS_URL, timeout=2)
             if response.status_code == 200:
                 models = response.json().get('models', [])
                 if models:
@@ -201,6 +205,8 @@ Do not include thinking tags in your final response."""
             return f"❌ Test failed: {str(e)}"
 
 
+from backend.core.recommendations import SimpleGenreBasedRecommendationEngine
+
 class UnifiedLetterboxdAnalyzer:
     """Complete Letterboxd analyzer with all features"""
     
@@ -210,6 +216,7 @@ class UnifiedLetterboxdAnalyzer:
         self.use_local_llm = use_local_llm
         self.local_llm = LocalLLMInterface() if use_local_llm else None
         self.openai_enabled = False
+        self.recommendation_engine = SimpleGenreBasedRecommendationEngine()
         
         if openai_api_key:
             try:
@@ -229,47 +236,56 @@ class UnifiedLetterboxdAnalyzer:
         """Load a Letterboxd profile from extracted data"""
         print(f"Loading profile for {username}...")
         
-        # Load basic profile info
-        profile_csv = os.path.join(profile_path, 'profile.csv')
-        if os.path.exists(profile_csv):
-            profile_df = pd.read_csv(profile_csv)
-            profile_info = profile_df.iloc[0].to_dict()
-        else:
-            profile_info = {}
-        
-        # Load all CSV files
-        files_to_load = ['ratings', 'reviews', 'watched', 'diary', 'watchlist', 'comments']
-        data = {}
-        
-        for file_name in files_to_load:
-            file_path = os.path.join(profile_path, f'{file_name}.csv')
-            data[file_name] = pd.read_csv(file_path) if os.path.exists(file_path) else pd.DataFrame()
-        
-        # Load lists
-        lists_dir = os.path.join(profile_path, 'lists')
-        lists = []
-        if os.path.exists(lists_dir):
-            for list_file in os.listdir(lists_dir):
-                if list_file.endswith('.csv'):
-                    list_df = pd.read_csv(os.path.join(lists_dir, list_file))
-                    list_df['list_name'] = list_file.replace('.csv', '')
-                    lists.append(list_df)
-        
-        profile = ProfileData(
-            username=username,
-            profile_info=profile_info,
-            ratings=data['ratings'],
-            reviews=data['reviews'],
-            watched=data['watched'],
-            diary=data['diary'],
-            watchlist=data['watchlist'],
-            comments=data['comments'],
-            lists=lists
-        )
-        
-        self.profiles[username] = profile
-        print(f"✓ Loaded {username}: {profile.total_movies} rated movies, {profile.total_reviews} reviews")
-        return profile
+        try:
+            # Load basic profile info
+            profile_csv = os.path.join(profile_path, 'profile.csv')
+            if os.path.exists(profile_csv):
+                profile_df = pd.read_csv(profile_csv)
+                profile_info = profile_df.iloc[0].to_dict()
+            else:
+                profile_info = {}
+
+            # Load all CSV files
+            files_to_load = ['ratings', 'reviews', 'watched', 'diary', 'watchlist', 'comments']
+            data = {}
+
+            for file_name in files_to_load:
+                file_path = os.path.join(profile_path, f'{file_name}.csv')
+                if os.path.exists(file_path):
+                    data[file_name] = pd.read_csv(file_path)
+                else:
+                    print(f"Warning: {file_name}.csv not found for {username}")
+                    data[file_name] = pd.DataFrame()
+
+            # Load lists
+            lists_dir = os.path.join(profile_path, 'lists')
+            lists = []
+            if os.path.exists(lists_dir):
+                for list_file in os.listdir(lists_dir):
+                    if list_file.endswith('.csv'):
+                        list_df = pd.read_csv(os.path.join(lists_dir, list_file))
+                        list_df['list_name'] = list_file.replace('.csv', '')
+                        lists.append(list_df)
+
+            profile = ProfileData(
+                username=username,
+                profile_info=profile_info,
+                ratings=data['ratings'],
+                reviews=data['reviews'],
+                watched=data['watched'],
+                diary=data['diary'],
+                watchlist=data['watchlist'],
+                comments=data['comments'],
+                lists=lists
+            )
+
+            self.profiles[username] = profile
+            print(f"✓ Loaded {username}: {profile.total_movies} rated movies, {profile.total_reviews} reviews")
+            return profile
+
+        except Exception as e:
+            print(f"Error loading profile {username}: {e}")
+            raise
     
     def extract_viewing_patterns(self, profile: ProfileData) -> Dict:
         """Extract comprehensive viewing patterns"""
@@ -348,16 +364,16 @@ class UnifiedLetterboxdAnalyzer:
     def analyze_genre_preferences(self, profile: ProfileData) -> Dict:
         """Analyze genre preferences from movie titles"""
         genre_keywords = {
-            'horror': ['horror', 'scary', 'nightmare', 'evil', 'dead', 'ghost', 'zombie', 'saw'],
-            'comedy': ['comedy', 'funny', 'humor', 'silly', 'american pie', 'hangover'],
-            'action': ['action', 'fight', 'war', 'mission', 'combat', 'fast', 'furious', 'john wick'],
-            'drama': ['drama', 'life', 'story', 'emotion', 'family'],
-            'romance': ['love', 'romance', 'wedding', 'romantic'],
-            'thriller': ['thriller', 'suspense', 'mystery', 'danger'],
-            'sci-fi': ['space', 'future', 'alien', 'star', 'mars', 'interstellar', 'matrix'],
-            'animated': ['animation', 'pixar', 'disney'],
-            'superhero': ['batman', 'superman', 'spider', 'marvel', 'avengers'],
-            'crime': ['crime', 'gangster', 'mafia', 'detective', 'police']
+            'horror': ['horror', 'scary', 'nightmare', 'evil', 'dead', 'ghost', 'zombie', 'saw', 'exorcist', 'conjuring', 'hereditary', 'midsommar', 'thing', 'alien'],
+            'comedy': ['comedy', 'funny', 'humor', 'silly', 'american pie', 'hangover', 'anchorman', 'step brothers', 'superbad', 'booksmart', 'snatch'],
+            'action': ['action', 'fight', 'war', 'mission', 'combat', 'fast', 'furious', 'john wick', 'die hard', 'terminator', 'mad max', 'gladiator'],
+            'drama': ['drama', 'life', 'story', 'emotion', 'family', 'goodfellas', 'godfather', 'schindler', 'forrest gump', 'parasite'],
+            'romance': ['love', 'romance', 'wedding', 'romantic', 'before sunrise', 'la la land', 'eternal sunshine', 'portrait of a lady on fire'],
+            'thriller': ['thriller', 'suspense', 'mystery', 'danger', 'se7en', 'silence of the lambs', 'zodiac', 'gone girl', 'prisoners'],
+            'sci-fi': ['space', 'future', 'alien', 'star', 'mars', 'interstellar', 'matrix', 'blade runner', '2001', 'dune', 'arrival', 'ex machina'],
+            'animated': ['animation', 'pixar', 'disney', 'gibli', 'spirited away', 'spider-verse', 'toy story', 'akira'],
+            'superhero': ['batman', 'superman', 'spider-man', 'marvel', 'avengers', 'x-men', 'iron man', 'wonder woman', 'dark knight'],
+            'crime': ['crime', 'gangster', 'mafia', 'detective', 'police', 'pulp fiction', 'goodfellas', 'godfather', 'departed', 'heat']
         }
         
         genre_scores = defaultdict(list)
@@ -532,7 +548,233 @@ class UnifiedLetterboxdAnalyzer:
         compatibility['recommendation'] = self._get_recommendation(overall)
         
         return compatibility
-    
+
+    def create_multi_profile_rating_chart(self, profiles):
+        """Create rating distribution comparison chart for multiple profiles"""
+        if not profiles:
+            return None
+
+        fig = go.Figure()
+        colors = ['#ff6b6b', '#4ecdc4', '#45b7d1', '#96ceb4', '#ffeaa7', '#dda0dd']
+
+        for i, profile in enumerate(profiles):
+            ratings = profile.ratings['Rating'].value_counts().sort_index()
+            all_ratings = sorted(ratings.index)
+
+            fig.add_trace(go.Bar(
+                x=all_ratings,
+                y=[ratings.get(r, 0) for r in all_ratings],
+                name=profile.username,
+                marker_color=colors[i % len(colors)],
+                opacity=0.7
+            ))
+
+        fig.update_layout(
+            title="Rating Distribution Comparison",
+            xaxis_title="Rating",
+            yaxis_title="Number of Movies",
+            barmode='group',
+            height=400,
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        )
+
+        return fig
+
+    def create_rating_trend_chart(self, profiles):
+        """Create rating trends over time"""
+        fig = go.Figure()
+        colors = ['#ff6b6b', '#4ecdc4', '#45b7d1', '#96ceb4', '#ffeaa7', '#dda0dd']
+
+        for i, profile in enumerate(profiles):
+            if not profile.diary.empty and 'Date' in profile.diary.columns:
+                diary_df = profile.diary.copy()
+                diary_df['Date'] = pd.to_datetime(diary_df['Date'], errors='coerce')
+                diary_df = diary_df.dropna(subset=['Date'])
+
+                if not diary_df.empty and 'Rating' in diary_df.columns:
+                    diary_df['Rating'] = pd.to_numeric(diary_df['Rating'], errors='coerce')
+                    diary_df = diary_df.dropna(subset=['Rating'])
+
+                    if not diary_df.empty:
+                        # Calculate monthly averages
+                        diary_df['YearMonth'] = diary_df['Date'].dt.to_period('M')
+                        monthly_avg = diary_df.groupby('YearMonth')['Rating'].mean().reset_index()
+                        monthly_avg['Date'] = monthly_avg['YearMonth'].dt.to_timestamp()
+
+                        fig.add_trace(go.Scatter(
+                            x=monthly_avg['Date'],
+                            y=monthly_avg['Rating'],
+                            mode='lines+markers',
+                            name=profile.username,
+                            line=dict(color=colors[i % len(colors)], width=3),
+                            marker=dict(size=6)
+                        ))
+
+        fig.update_layout(
+            title="Rating Trends Over Time (Monthly Averages)",
+            xaxis_title="Date",
+            yaxis_title="Average Rating",
+            height=400,
+            hovermode='x unified'
+        )
+
+        return fig
+
+    def create_common_movies_chart(self, common_movies):
+        """Create chart showing rating differences for common movies"""
+        if not common_movies or len(common_movies) < 2:
+            return None
+
+        df = pd.DataFrame(common_movies[:20])  # Top 20
+
+        # For 2 profiles, create scatter plot
+        if len(df.columns) == 5:  # movie, year, rating1, rating2, difference
+            fig = px.scatter(
+                df,
+                x=df.columns[2],  # First user's rating
+                y=df.columns[3],  # Second user's rating
+                hover_data=['movie', 'year'],
+                title="Rating Comparison for Common Movies",
+                labels={
+                    df.columns[2]: f"{df.columns[2].replace('_rating', '')} Rating",
+                    df.columns[3]: f"{df.columns[3].replace('_rating', '')} Rating"
+                }
+            )
+
+            # Add diagonal line for perfect agreement
+            fig.add_trace(go.Scatter(
+                x=[0.5, 5],
+                y=[0.5, 5],
+                mode='lines',
+                line=dict(dash='dash', color='red'),
+                name='Perfect Agreement',
+                showlegend=True
+            ))
+
+            fig.update_layout(height=500)
+            return fig
+
+        return None
+
+    def get_advanced_statistics(self, profiles):
+        """Get advanced statistical analysis for profiles"""
+        stats_data = []
+        for profile in profiles:
+            if not profile.ratings.empty:
+                ratings = pd.to_numeric(profile.ratings['Rating'], errors='coerce').dropna()
+
+                # Calculate advanced metrics
+                rating_std = ratings.std()
+                rating_skew = stats.skew(ratings)
+                rating_kurtosis = stats.kurtosis(ratings)
+                rating_median = ratings.median()
+                rating_mode = ratings.mode().iloc[0] if not ratings.mode().empty else 0
+
+                # Rating distribution percentiles
+                p25 = ratings.quantile(0.25)
+                p75 = ratings.quantile(0.75)
+                iqr = p75 - p25
+
+                # Activity metrics
+                total_reviews = len(profile.reviews)
+                review_rate = (total_reviews / len(ratings) * 100) if len(ratings) > 0 else 0
+
+                # Year span analysis
+                if 'Year' in profile.ratings.columns:
+                    years = pd.to_numeric(profile.ratings['Year'], errors='coerce').dropna()
+                    year_span = years.max() - years.min() if len(years) > 0 else 0
+                    avg_year = years.mean() if len(years) > 0 else 0
+                else:
+                    year_span = 0
+                    avg_year = 0
+
+                stats_data.append({
+                    "👤 Username": profile.username,
+                    "🎬 Total Movies": len(ratings),
+                    "⭐ Avg Rating": f"{ratings.mean():.2f}",
+                    "📊 Std Dev": f"{rating_std:.2f}",
+                    "📈 Skewness": f"{rating_skew:.2f}",
+                    "📉 Kurtosis": f"{rating_kurtosis:.2f}",
+                    "🎯 Median": f"{rating_median:.1f}",
+                    "🏆 Mode": f"{rating_mode:.1f}",
+                    "📏 IQR": f"{iqr:.2f}",
+                    "✍️ Review Rate": f"{review_rate:.1f}%",
+                    "📅 Year Span": f"{int(year_span)}",
+                    "🗓️ Avg Year": f"{int(avg_year)}"
+                })
+
+        return pd.DataFrame(stats_data)
+
+    def get_enhanced_profile_metrics(self, profile):
+        """Create enhanced metrics for a profile"""
+        metrics = {}
+
+        if not profile.ratings.empty:
+            ratings = pd.to_numeric(profile.ratings['Rating'], errors='coerce').dropna()
+
+            # Basic metrics
+            metrics['total_movies'] = len(ratings)
+            metrics['avg_rating'] = ratings.mean()
+            metrics['median_rating'] = ratings.median()
+            metrics['std_rating'] = ratings.std()
+
+            # Advanced metrics
+            metrics['rating_skew'] = stats.skew(ratings)
+            metrics['rating_kurtosis'] = stats.kurtosis(ratings)
+
+            # Rating distribution
+            metrics['five_star_pct'] = (ratings == 5.0).sum() / len(ratings) * 100
+            metrics['four_plus_pct'] = (ratings >= 4.0).sum() / len(ratings) * 100
+            metrics['three_minus_pct'] = (ratings <= 3.0).sum() / len(ratings) * 100
+
+            # Consistency metrics
+            metrics['rating_variance'] = ratings.var()
+
+            # Year analysis
+            if 'Year' in profile.ratings.columns:
+                years = pd.to_numeric(profile.ratings['Year'], errors='coerce').dropna()
+                if len(years) > 0:
+                    metrics['oldest_movie'] = int(years.min())
+                    metrics['newest_movie'] = int(years.max())
+                    metrics['avg_movie_year'] = years.mean()
+
+        # Review metrics
+        metrics['total_reviews'] = len(profile.reviews)
+        metrics['review_rate'] = (metrics['total_reviews'] / metrics.get('total_movies', 1)) * 100
+
+        return metrics
+
+    def generate_safe_individual_analysis(self, profile):
+        """Generate a safer version of individual analysis that handles missing data"""
+        try:
+            if not self.llm_available:
+                return "LLM analysis not available"
+
+            prompt = prompts.get_individual_analysis_prompt_safe(profile)
+
+            # Use available LLM service
+            if hasattr(self, 'local_llm') and self.local_llm and self.local_llm.available_service:
+                return self.local_llm.generate_response(prompt, 2000)
+            elif self.openai_enabled:
+                try:
+                    import openai
+                    response = openai.ChatCompletion.create(
+                        model="gpt-3.5-turbo",  # Use more reliable model
+                        messages=[
+                            {"role": "system", "content": "You are an expert film critic and personality analyst. Provide detailed, specific insights based on movie preferences."},
+                            {"role": "user", "content": prompt}
+                        ],
+                        max_tokens=2000,
+                        temperature=0.8
+                    )
+                    return response.choices[0].message.content
+                except Exception as e:
+                    return f"OpenAI error: {str(e)}"
+            else:
+                return "No LLM service available"
+
+        except Exception as e:
+            return f"Error generating analysis: {str(e)}"
     def _get_recommendation(self, score: float) -> str:
         """Get recommendation based on compatibility score"""
         if score >= 0.8:
@@ -564,85 +806,14 @@ class UnifiedLetterboxdAnalyzer:
         # Get filtered recommendations for both users
         watched1 = self.get_watched_movies_set(profile1)
         watched2 = self.get_watched_movies_set(profile2)
-        combined_watched = watched1.union(watched2)
         
         recs1 = self.get_similar_movies_recommendations(profile1, 4)
         recs2 = self.get_similar_movies_recommendations(profile2, 4)
         
-        # Filter recommendations to exclude movies either user has seen
-        filtered_recs1 = [movie for movie in recs1 if movie not in combined_watched]
-        filtered_recs2 = [movie for movie in recs2 if movie not in combined_watched]
-        
-        prompt = f"""You are an expert film critic and psychologist analyzing two Letterboxd users. Provide a comprehensive, well-structured analysis of their movie taste compatibility.
-
-## 🎬 USER PROFILES
-
-**{profile1.username}:**
-• {profile1.total_movies} movies rated (avg: {profile1.avg_rating:.2f}★) | {len(watched1)} total watched
-• Personality: {personality1.get('type', 'unknown')} - {personality1.get('description', 'N/A')}
-• Top genres: {', '.join([f"{g} ({d['avg_rating']:.1f}★)" for g, d in sorted(genres1.items(), key=lambda x: x[1]['preference_score'], reverse=True)[:3]])}
-• Rating style: {patterns1.get('harsh_critic_ratio', 0):.1%} harsh, {patterns1.get('generous_rater_ratio', 0):.1%} generous
-
-**{profile2.username}:**
-• {profile2.total_movies} movies rated (avg: {profile2.avg_rating:.2f}★) | {len(watched2)} total watched
-• Personality: {personality2.get('type', 'unknown')} - {personality2.get('description', 'N/A')}
-• Top genres: {', '.join([f"{g} ({d['avg_rating']:.1f}★)" for g, d in sorted(genres2.items(), key=lambda x: x[1]['preference_score'], reverse=True)[:3]])}
-• Rating style: {patterns2.get('harsh_critic_ratio', 0):.1%} harsh, {patterns2.get('generous_rater_ratio', 0):.1%} generous
-
-## 📊 COMPATIBILITY METRICS
-• **Overlap**: {len(common_movies)} movies both have watched
-• **Overall compatibility**: {compatibility.get('overall_score', 0):.1%}
-• **Rating agreement**: Avg difference {compatibility.get('rating_agreement', {}).get('avg_difference', 'N/A')}
-• **Shared loves**: {compatibility.get('rating_agreement', {}).get('both_loved_count', 0)} movies both rated 4+★
-• **Major disagreements**: {compatibility.get('rating_agreement', {}).get('major_disagreements', 0)} movies
-
-## 🎯 UNWATCHED RECOMMENDATIONS
-**For {profile1.username} (based on their tastes):**
-{chr(10).join([f"• {movie}" for movie in filtered_recs1[:4]]) if filtered_recs1 else "• Custom recommendations needed"}
-
-**For {profile2.username} (based on their tastes):**
-{chr(10).join([f"• {movie}" for movie in filtered_recs2[:4]]) if filtered_recs2 else "• Custom recommendations needed"}
-
-## 🔍 COMPREHENSIVE ANALYSIS FRAMEWORK
-
-Provide detailed analysis in these sections:
-
-### 🧠 **DEEP PERSONALITY INSIGHTS**
-- How do their core personalities complement or clash based on movie preferences?
-- What do their different rating styles reveal about their approaches to criticism and life?
-- How do their preferred genres reflect their values, emotional needs, and worldviews?
-
-### 🎭 **TASTE COMPATIBILITY ANALYSIS**
-- Where do they align cinematically and why? What creates harmony?
-- What are their key differences and how might these create interesting tensions?
-- How do their preferences for mainstream vs. art house films compare?
-
-### 💬 **DISCUSSION & DEBATE DYNAMICS**
-- What film topics would generate passionate discussions between them?
-- Where would they find common ground vs. respectful disagreement?
-- How would their different critical approaches lead to interesting conversations?
-
-### 🎬 **JOINT VIEWING PREDICTIONS**
-- How would their movie nights play out? Who would typically choose?
-- What compromises would they need to make for enjoyable shared viewing?
-- What genres or types of films would work best for both?
-
-### 📝 **BRIDGE RECOMMENDATIONS**
-- Analyze the provided recommendations and suggest 3-4 additional specific unwatched films that would appeal to BOTH users
-- Explain exactly WHY each recommendation bridges their different tastes
-- Consider films that challenge both users while staying within their comfort zones
-
-### 🔮 **RELATIONSHIP COMPATIBILITY FORECAST**
-- How could their different film perspectives strengthen their relationship long-term?
-- What blind spots could each help the other overcome in their cinematic journey?
-- How would they influence each other's taste evolution over time?
-
-### 💡 **ACTIONABLE INSIGHTS**
-- Specific strategies for successful movie discussions and choices
-- How to leverage their differences for mutual growth and discovery
-- Warning signs of potential film-related conflicts and how to avoid them
-
-Use specific examples from their actual viewing data. Be detailed, insightful, and practical in your analysis."""
+        prompt = prompts.get_profile_analysis_prompt(
+            profile1, profile2, patterns1, patterns2, genres1, genres2,
+            personality1, personality2, recs1, recs2, common_movies, compatibility, watched1, watched2
+        )
 
         # Use local LLM or OpenAI
         if self.local_llm and self.local_llm.available_service:
@@ -685,87 +856,10 @@ Use specific examples from their actual viewing data. Be detailed, insightful, a
         low_rated = profile.ratings[profile.ratings['Rating'] <= 2.0].head(5) if not profile.ratings.empty else pd.DataFrame()
         recent_reviews = profile.reviews.head(5) if not profile.reviews.empty else pd.DataFrame()
         
-        prompt = f"""Analyze this Letterboxd user's cinematic personality with deep psychological insights and detailed recommendations.
-
-## 🎬 COMPREHENSIVE USER PROFILE: {profile.username}
-
-### 📊 CORE STATISTICS
-• **Total movies rated:** {profile.total_movies} | **Average rating:** {profile.avg_rating:.2f}★
-• **Total reviews:** {profile.total_reviews} | **Join date:** {profile.join_date.strftime('%B %Y') if profile.join_date else 'Unknown'}
-• **Movies watched:** {len(watched_movies)} total entries
-• **Watchlist items:** {len(watchlist)} movies queued
-
-### 🎭 PERSONALITY & PSYCHOLOGY
-• **Type:** {personality.get('type', 'Unknown')}
-• **Core traits:** {personality.get('description', 'N/A')}
-
-### 🎯 DETAILED RATING PATTERNS
-• **Rating variance:** {detailed_prefs.get('rating_variance', 0):.2f} (consistency measure)
-• **Most common rating:** {detailed_prefs.get('most_common_rating', 3.0)}★
-• **High ratings (4.5+):** {detailed_prefs.get('high_rated_percentage', 0):.1f}% of all movies
-• **Low ratings (≤2.0):** {detailed_prefs.get('low_rated_percentage', 0):.1f}% of all movies
-• **Harsh critic ratio:** {patterns.get('harsh_critic_ratio', 0):.1%}
-• **Generous rater ratio:** {patterns.get('generous_rater_ratio', 0):.1%}
-
-### 🎬 GENRE DEEP DIVE
-**Top 5 Genre Preferences:**
-{chr(10).join([f"• **{g}**: {d['avg_rating']:.1f}★ avg • {d['movie_count']} films • {d['preference_score']:.1f} preference score" for g, d in sorted(genres.items(), key=lambda x: x[1]['preference_score'], reverse=True)[:5]])}
-
-### ⭐ MOVIE TASTE ANALYSIS
-**ABSOLUTE FAVORITES (4.5-5★):**
-{chr(10).join([f"• {row['Name']} ({row['Year']}) - {row['Rating']}★" for _, row in top_rated.iterrows()]) if not top_rated.empty else '• No 5-star ratings found'}
-
-**STRONG DISLIKES (≤2★):**
-{chr(10).join([f"• {row['Name']} ({row['Year']}) - {row['Rating']}★" for _, row in low_rated.iterrows()]) if not low_rated.empty else '• No strong dislikes recorded'}
-
-### 📝 RECENT ACTIVITY
-{f"**Watchlist preview:** {', '.join(watchlist[:5])}" if watchlist else "**Watchlist:** Empty or not available"}
-{f"**Recent reviews:** {len(recent_reviews)} written" if not recent_reviews.empty else "**Recent reviews:** None available"}
-
-### 🎯 FILTERED RECOMMENDATIONS (UNWATCHED FILMS)
-**Curated for {profile.username}:**
-{chr(10).join([f"• {movie}" for movie in recommendations]) if recommendations else '• Analysis-based recommendations available'}
-
-## � COMPREHENSIVE ANALYSIS REQUEST
-
-Provide an in-depth psychological and cinematic analysis covering:
-
-### 🧠 **DEEP PERSONALITY INSIGHTS**
-- What do their specific movie preferences reveal about their worldview, emotional needs, and life philosophy?
-- How do their rating patterns reflect their personality traits and critical thinking style?
-- What psychological themes do they gravitate toward in cinema?
-
-### � **AESTHETIC & NARRATIVE PREFERENCES**
-- What visual styles, storytelling approaches, and thematic elements do they prefer?
-- How sophisticated vs. accessible are their tastes? Art house vs. mainstream balance?
-- What does their genre distribution reveal about their emotional and intellectual needs?
-
-### � **CRITICAL ANALYSIS STYLE**
-- How do their rating patterns compare to typical users? Are they harsh, generous, or balanced?
-- What does their rating variance suggest about their critical consistency?
-- How do they use the full rating scale? What does their most common rating reveal?
-
-### 💭 **EMOTIONAL & INTELLECTUAL PROFILE**
-- What emotions do they seek from cinema? Escapism, catharsis, intellectual stimulation, nostalgia?
-- How do they balance entertainment vs. artistic merit in their choices?
-- What life experiences might their preferences reflect?
-
-### 🎬 **SPECIFIC RECOMMENDATIONS & REASONING**
-- Analyze the provided unwatched recommendations and explain WHY each would appeal to them
-- Suggest 3-4 additional specific films (that they haven't seen) with detailed reasoning
-- Consider their watchlist and explain what patterns you see in their planned viewing
-
-### 🔮 **LIFESTYLE & RELATIONSHIP INSIGHTS**
-- What might their cinema habits suggest about their lifestyle, social preferences, and relationships?
-- How would they behave in group movie settings? Solo viewing vs. social watching?
-- What kind of film discussions would they excel in or avoid?
-
-### 📈 **VIEWING EVOLUTION & GROWTH**
-- How might their tastes be evolving based on recent activity?
-- What blind spots exist in their viewing that could expand their horizons?
-- How adventurous vs. comfort-zone-focused are they in their choices?
-
-Be extremely specific, avoid generic observations, and use their actual data as evidence. Provide actionable insights about their cinematic personality."""
+        prompt = prompts.get_individual_analysis_prompt(
+            profile, patterns, genres, personality, detailed_prefs,
+            watched_movies, watchlist, recommendations, top_rated, low_rated, recent_reviews
+        )
 
         # Use local LLM or OpenAI
         if self.local_llm and self.local_llm.available_service:
@@ -789,65 +883,6 @@ Be extremely specific, avoid generic observations, and use their actual data as 
                 return f"OpenAI error: {str(e)}"
         else:
             return "No LLM service available"
-    
-    def generate_complete_analysis(self, username1: str, username2: str) -> Dict:
-        """Generate the complete analysis report"""
-        if username1 not in self.profiles or username2 not in self.profiles:
-            return {"error": "Profiles not loaded"}
-        
-        profile1 = self.profiles[username1]
-        profile2 = self.profiles[username2]
-        
-        print("🔍 Performing complete analysis...")
-        
-        # All analysis components
-        patterns1 = self.extract_viewing_patterns(profile1)
-        patterns2 = self.extract_viewing_patterns(profile2)
-        genres1 = self.analyze_genre_preferences(profile1)
-        genres2 = self.analyze_genre_preferences(profile2)
-        personality1 = self.generate_personality_profile(profile1)
-        personality2 = self.generate_personality_profile(profile2)
-        common_movies = self.find_common_movies(profile1, profile2)
-        compatibility = self.calculate_compatibility(profile1, profile2)
-        
-        # LLM analysis
-        llm_analysis = self.llm_analyze_profiles(profile1, profile2) if self.llm_available else "LLM analysis not available"
-        
-        return {
-            'analysis_date': datetime.now().isoformat(),
-            'users': [username1, username2],
-            'profiles': {
-                username1: {
-                    'stats': {
-                        'total_movies': profile1.total_movies,
-                        'avg_rating': profile1.avg_rating,
-                        'total_reviews': profile1.total_reviews
-                    },
-                    'patterns': patterns1,
-                    'genres': genres1,
-                    'personality': personality1
-                },
-                username2: {
-                    'stats': {
-                        'total_movies': profile2.total_movies,
-                        'avg_rating': profile2.avg_rating,
-                        'total_reviews': profile2.total_reviews
-                    },
-                    'patterns': patterns2,
-                    'genres': genres2,
-                    'personality': personality2
-                }
-            },
-            'common_movies': common_movies,
-            'compatibility': compatibility,
-            'llm_analysis': llm_analysis,
-            'summary': {
-                'compatibility_score': compatibility.get('overall_score', 0),
-                'recommendation': compatibility.get('recommendation', ''),
-                'common_movies_count': len(common_movies),
-                'llm_enabled': self.llm_available
-            }
-        }
     
     def get_watched_movies_set(self, profile: ProfileData) -> set:
         """Get set of all movies the user has watched (from ratings, watched, and diary)"""
@@ -922,172 +957,4 @@ Be extremely specific, avoid generic observations, and use their actual data as 
 
     def get_similar_movies_recommendations(self, profile: ProfileData, count: int = 5) -> list:
         """Generate movie recommendations based on user's preferences, excluding already watched"""
-        watched_movies = self.get_watched_movies_set(profile)
-        genres = self.analyze_genre_preferences(profile)
-        patterns = self.extract_viewing_patterns(profile)
-        
-        # Get top-rated movies by user for pattern analysis
-        high_rated = profile.ratings[profile.ratings['Rating'] >= 4.5]['Name'].tolist() if not profile.ratings.empty else []
-        
-        # Create a curated list based on preferences (this would ideally come from a movie database)
-        # For now, using a sample of acclaimed movies per genre
-        recommendations_pool = {
-            'drama': ['Parasite (2019)', 'Nomadland (2020)', 'Moonlight (2016)', 'Call Me by Your Name (2017)', 'Manchester by the Sea (2016)'],
-            'thriller': ['Prisoners (2013)', 'Zodiac (2007)', 'Gone Girl (2014)', 'Nightcrawler (2014)', 'Sicario (2015)'],
-            'comedy': ['The Grand Budapest Hotel (2014)', 'In Bruges (2008)', 'Hunt for the Wilderpeople (2016)', 'What We Do in the Shadows (2014)'],
-            'horror': ['Hereditary (2018)', 'The Babadook (2014)', 'A Quiet Place (2018)', 'Midsommar (2019)', 'The Witch (2015)'],
-            'sci-fi': ['Arrival (2016)', 'Ex Machina (2014)', 'Blade Runner 2049 (2017)', 'Her (2013)', 'Annihilation (2018)'],
-            'action': ['Mad Max: Fury Road (2015)', 'John Wick (2014)', 'Mission: Impossible - Fallout (2018)', 'The Raid (2011)'],
-            'romance': ['The Before Trilogy', 'Lost in Translation (2003)', 'Her (2013)', 'The Shape of Water (2017)'],
-            'animation': ['Spider-Man: Into the Spider-Verse (2018)', 'Coco (2017)', 'Inside Out (2015)', 'Spirited Away (2001)']
-        }
-        
-        # Select recommendations based on top genres
-        recommendations = []
-        top_genres = sorted(genres.items(), key=lambda x: x[1]['preference_score'], reverse=True)[:3]
-        
-        for genre, _ in top_genres:
-            genre_key = genre.lower()
-            if genre_key in recommendations_pool:
-                for movie in recommendations_pool[genre_key]:
-                    if movie not in watched_movies and movie not in recommendations:
-                        recommendations.append(movie)
-                        if len(recommendations) >= count:
-                            break
-            if len(recommendations) >= count:
-                break
-        
-        return recommendations[:count]
-    
-
-def print_analysis_report(analysis: Dict):
-    """Print a beautiful analysis report"""
-    print("\n" + "="*100)
-    print(" 🎬 COMPLETE LETTERBOXD PROFILE ANALYSIS 🎬 ".center(100, "="))
-    print("="*100)
-    
-    users = analysis['users']
-    profiles = analysis['profiles']
-    compatibility = analysis['compatibility']
-    common_movies = analysis['common_movies']
-    
-    # Header
-    print(f"\n📊 PROFILE OVERVIEW")
-    print("-" * 50)
-    for user in users:
-        stats = profiles[user]['stats']
-        personality = profiles[user]['personality']
-        print(f"👤 {user}:")
-        print(f"   📽️  {stats['total_movies']} movies rated (avg: {stats['avg_rating']:.2f}⭐)")
-        print(f"   📝 {stats['total_reviews']} reviews written")
-        print(f"   🎭 {personality.get('type', 'unknown').replace('_', ' ').title()}")
-        print(f"   💭 {personality.get('description', 'N/A')}")
-        print()
-    
-    # Compatibility
-    print(f"🤝 COMPATIBILITY ANALYSIS")
-    print("-" * 50)
-    score = compatibility.get('overall_score', 0)
-    print(f"Overall Compatibility: {score:.1%} {'🟢' if score > 0.7 else '🟡' if score > 0.5 else '🔴'}")
-    print(f"Recommendation: {compatibility.get('recommendation', 'N/A')}")
-    print()
-    
-    # Detailed metrics
-    rating_agreement = compatibility.get('rating_agreement', {})
-    print(f"📈 Detailed Metrics:")
-    print(f"   Common movies: {rating_agreement.get('common_movies_count', 0)}")
-    if rating_agreement.get('avg_difference'):
-        print(f"   Average rating difference: {rating_agreement['avg_difference']:.2f}⭐")
-        print(f"   Movies both loved (4⭐+): {rating_agreement.get('both_loved_count', 0)}")
-        print(f"   Movies both disliked (≤2⭐): {rating_agreement.get('both_hated_count', 0)}")
-        print(f"   Major disagreements (≥2⭐ diff): {rating_agreement.get('major_disagreements', 0)}")
-    
-    if 'pattern_similarity' in compatibility:
-        print(f"   Rating pattern similarity: {compatibility['pattern_similarity']:.1%}")
-    if 'genre_compatibility' in compatibility:
-        print(f"   Genre taste alignment: {compatibility['genre_compatibility']:.1%}")
-    print(f"   Personality match: {compatibility.get('personality_match', 0):.1%}")
-    print()
-    
-    # Genre preferences
-    print(f"🎭 GENRE PREFERENCES")
-    print("-" * 50)
-    for user in users:
-        genres = profiles[user]['genres']
-        print(f"{user}'s top genres:")
-        top_genres = sorted(genres.items(), key=lambda x: x[1]['preference_score'], reverse=True)[:5]
-        for genre, data in top_genres:
-            print(f"   {genre.title()}: {data['avg_rating']:.1f}⭐ ({data['count']} movies)")
-        print()
-    
-    # Common movies highlights
-    if common_movies:
-        print(f"🎯 MOVIE AGREEMENT HIGHLIGHTS")
-        print("-" * 50)
-        
-        # Perfect agreements
-        perfect = [m for m in common_movies if m['difference'] == 0 and m['both_loved']]
-        if perfect:
-            print("🎉 Perfect agreements (both loved):")
-            for movie in perfect[:5]:
-                rating = movie[f"{users[0]}_rating"]
-                print(f"   {movie['movie']} ({movie['year']}) - Both rated {rating}⭐")
-        
-        # Biggest disagreements
-        disagreements = sorted(common_movies, key=lambda x: x['difference'], reverse=True)[:5]
-        if disagreements and disagreements[0]['difference'] > 0:
-            print(f"\n💥 Biggest disagreements:")
-            for movie in disagreements:
-                if movie['difference'] > 0:
-                    print(f"   {movie['movie']} ({movie['year']}): {movie[f'{users[0]}_rating']}⭐ vs {movie[f'{users[1]}_rating']}⭐")
-        print()
-    
-    # LLM Analysis
-    if analysis.get('llm_analysis') and analysis['llm_analysis'] != "LLM analysis not available":
-        print(f"🤖 AI DEEP ANALYSIS")
-        print("-" * 50)
-        print(analysis['llm_analysis'])
-        print()
-    
-    print("="*100)
-
-
-def main():
-    """Main execution function"""
-    print("🎬 Unified Letterboxd Profile Analyzer")
-    print("=" * 60)
-    
-    # Initialize analyzer
-    openai_key = os.getenv('OPENAI_API_KEY')
-    analyzer = UnifiedLetterboxdAnalyzer(openai_api_key=openai_key, use_local_llm=True)
-    
-    # Profile paths (update these for your data)
-    profile1_path = "/Users/mailyas/Downloads/letterboxd/hashtag7781/letterboxd-hashtag7781-2025-06-13-22-11-utc"
-    profile2_path = "/Users/mailyas/Downloads/letterboxd/whiteknight03x"
-    
-    # Load profiles
-    print("\n📂 Loading profiles...")
-    try:
-        profile1 = analyzer.load_profile(profile1_path, "hashtag7781")
-        profile2 = analyzer.load_profile(profile2_path, "whiteknight03x")
-    except Exception as e:
-        print(f"❌ Error loading profiles: {e}")
-        return
-    
-    # Generate complete analysis
-    analysis = analyzer.generate_complete_analysis("hashtag7781", "whiteknight03x")
-    
-    # Print report
-    print_analysis_report(analysis)
-    
-    # Save option
-    save = input("💾 Save complete analysis to JSON? (y/n): ").lower().strip()
-    if save == 'y':
-        filename = f"complete_letterboxd_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-        with open(filename, 'w') as f:
-            json.dump(analysis, f, indent=2, default=str)
-        print(f"✅ Analysis saved to {filename}")
-
-
-if __name__ == "__main__":
-    main()
+        return self.recommendation_engine.recommend(profile, self, count)

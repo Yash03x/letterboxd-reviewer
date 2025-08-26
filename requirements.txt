@@ -17,3 +17,7 @@ zipfile36>=0.1.3  # Better zip handling (optional, built-in zipfile is sufficien
 # Optional dependencies:
 # openai>=0.28.0  # For OpenAI LLM support
 # ollama  # For Ollama local LLM support
+
+# Backend dependencies
+fastapi>=0.100.0
+uvicorn>=0.23.0
