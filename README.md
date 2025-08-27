@@ -18,59 +18,52 @@ A sophisticated system for analyzing and comparing up to 4 Letterboxd user profi
 
 ## 📁 Project Structure
 
-- `unified_analyzer.py` - Main analyzer with all functionality
-- `streamlit_app.py` - Web interface dashboard
-- `requirements.txt` - Dependencies
-- `README.md` - This documentation
+- `app.py`: The Streamlit frontend application.
+- `backend/`: The FastAPI backend application.
+  - `main.py`: The main FastAPI application file with API endpoints.
+  - `core/`: Core application logic.
+    - `analyzer.py`: The main analyzer class.
+    - `recommendations.py`: The recommendation engine.
+    - `recommendations.json`: A list of movie recommendations.
+  - `config/`: Configuration files.
+    - `settings.py`: Application settings.
+    - `prompts.py`: LLM prompts.
+- `requirements.txt`: Project dependencies.
+- `README.md`: This documentation.
 
 ## 🚀 Quick Start
+
+This application now runs as two separate services: a FastAPI backend and a Streamlit frontend.
 
 ### 1. Install Dependencies
 ```bash
 pip install -r requirements.txt
 ```
 
-### 2. Prepare Data
-
-**Option 1: Upload Files in Web Interface (Recommended)**
-1. Export your Letterboxd data from Settings → Import & Export → Export Your Data
-2. Keep the ZIP files - no need to extract
-3. Use the web interface to upload and analyze
-
-**Option 2: Use Local Data**
-1. Export your Letterboxd data from Settings → Import & Export → Export Your Data
-2. Extract ZIP files to separate folders
-3. The system will auto-detect local data folders
-
-### 3. Run Analysis
-
-**Web Interface (Recommended):**
-```bash
-streamlit run streamlit_app.py
+### 2. Configure Environment
+Create a `.env` file in the root of the project and add your OpenAI API key if you want to use the OpenAI LLM integration:
+```
+OPENAI_API_KEY="your-api-key"
 ```
 
-Then:
-1. Configure 2-4 profiles using the web interface
-2. Choose between uploading ZIP files or using local data
-3. Load profiles and start analysis
-
-**Command Line:**
+### 3. Run the Backend
+Start the FastAPI backend service from the root of the project:
 ```bash
-python3 unified_analyzer.py
+python3 -m uvicorn backend.main:app --reload
 ```
+The backend will be available at `http://127.0.0.1:8000`.
 
-### 4. Enable LLM Analysis (Optional)
-
-**For Local LLM (Recommended):**
-- Install [Ollama](https://ollama.ai) or [LM Studio](https://lmstudio.ai)
-- Start the service
-- The analyzer will auto-detect and use local LLM
-
-**For OpenAI:**
+### 4. Run the Frontend
+In a separate terminal, start the Streamlit frontend application:
 ```bash
-export OPENAI_API_KEY="your-api-key"
-python3 unified_analyzer.py
+streamlit run app.py
 ```
+This will open the application in your web browser.
+
+### 5. Use the Application
+- Open the application in your browser.
+- Upload your Letterboxd ZIP files using the file uploader.
+- The application will analyze the profiles and display the comparison.
 
 ## 📊 What You Get
 
