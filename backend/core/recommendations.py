@@ -1,7 +1,9 @@
 import json
 from typing import Protocol, List, Dict
-from backend.core.analyzer import ProfileData
-from backend.config import settings
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from core.analyzer import ProfileData
+from config import settings
 
 class RecommendationEngine(Protocol):
     """Protocol for a recommendation engine."""

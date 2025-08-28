@@ -1,10 +1,11 @@
 """
 LLM prompts for the Letterboxd Analyzer application.
 """
+import pandas as pd
 
-def get_profile_analysis_prompt(profile, patterns, genres, personality, recs1, recs2, common_movies, compatibility, watched1, watched2):
+def get_profile_analysis_prompt(profile1, profile2, patterns1, patterns2, genres1, genres2, personality1, personality2, recs1, recs2, common_movies, compatibility, watched1, watched2):
     """Generates the prompt for comparing two profiles."""
-    return f\"\"\"You are an expert film critic and psychologist analyzing two Letterboxd users. Provide a comprehensive, well-structured analysis of their movie taste compatibility.
+    return f"""You are an expert film critic and psychologist analyzing two Letterboxd users. Provide a comprehensive, well-structured analysis of their movie taste compatibility.
 
 ## 🎬 USER PROFILES
 
@@ -73,12 +74,12 @@ Provide detailed analysis in these sections:
 - How to leverage their differences for mutual growth and discovery
 - Warning signs of potential film-related conflicts and how to avoid them
 
-Use specific examples from their actual viewing data. Be detailed, insightful, and practical in your analysis.\"\"\"
+Use specific examples from their actual viewing data. Be detailed, insightful, and practical in your analysis."""
 
 
 def get_individual_analysis_prompt(profile, patterns, genres, personality, detailed_prefs, watched_movies, watchlist, recommendations, top_rated, low_rated, recent_reviews):
     """Generates the prompt for analyzing a single profile."""
-    return f\"\"\"Analyze this Letterboxd user's cinematic personality with deep psychological insights and detailed recommendations.
+    return f"""Analyze this Letterboxd user's cinematic personality with deep psychological insights and detailed recommendations.
 
 ## 🎬 COMPREHENSIVE USER PROFILE: {profile.username}
 
@@ -158,7 +159,7 @@ Provide an in-depth psychological and cinematic analysis covering:
 - What blind spots exist in their viewing that could expand their horizons?
 - How adventurous vs. comfort-zone-focused are they in their choices?
 
-Be extremely specific, avoid generic observations, and use their actual data as evidence. Provide actionable insights about their cinematic personality.\"\"\"
+Be extremely specific, avoid generic observations, and use their actual data as evidence. Provide actionable insights about their cinematic personality."""
 
 def get_individual_analysis_prompt_safe(profile):
     """Generate a safer version of individual analysis that handles missing data"""
@@ -194,7 +195,7 @@ def get_individual_analysis_prompt_safe(profile):
                 ).tolist()
 
         # Create a simplified but comprehensive prompt
-        return f\"\"\"Analyze this Letterboxd user's movie preferences and provide personality insights.
+        return f"""Analyze this Letterboxd user's movie preferences and provide personality insights.
 
 USER PROFILE: {profile.username}
 
@@ -219,7 +220,7 @@ Provide a detailed personality analysis covering:
 4. **Personality Traits**: What psychological traits emerge from their movie choices?
 5. **Recommendations**: Suggest 3-5 specific movies they might enjoy and explain why.
 
-Be specific, insightful, and avoid generic observations. Use their actual ratings as evidence.\"\"\"
+Be specific, insightful, and avoid generic observations. Use their actual ratings as evidence."""
 
     except Exception as e:
         return f"Error generating analysis prompt: {str(e)}"

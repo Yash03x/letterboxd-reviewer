@@ -19,7 +19,7 @@ from scipy import stats
 import plotly.graph_objects as go
 import plotly.express as px
 
-from backend.config import settings, prompts
+from config import settings, prompts
 
 @dataclass
 class ProfileData:
@@ -33,6 +33,8 @@ class ProfileData:
     watchlist: pd.DataFrame
     comments: pd.DataFrame
     lists: List[pd.DataFrame]
+    likes: pd.DataFrame = None
+    all_films: pd.DataFrame = None
     
     def __post_init__(self):
         """Process data after initialization"""
@@ -93,7 +95,7 @@ class LocalLLMInterface:
         """Generate using Ollama"""
         try:
             payload = {
-                "model": "llama3.2:latest",
+                "model": "deepseek-r1:32b",  # Using available model
                 "prompt": prompt,
                 "stream": False,
                 "options": {
@@ -205,7 +207,7 @@ Do not include thinking tags in your final response."""
             return f"❌ Test failed: {str(e)}"
 
 
-from backend.core.recommendations import SimpleGenreBasedRecommendationEngine
+# from core.recommendations import SimpleGenreBasedRecommendationEngine
 
 class UnifiedLetterboxdAnalyzer:
     """Complete Letterboxd analyzer with all features"""
@@ -216,7 +218,7 @@ class UnifiedLetterboxdAnalyzer:
         self.use_local_llm = use_local_llm
         self.local_llm = LocalLLMInterface() if use_local_llm else None
         self.openai_enabled = False
-        self.recommendation_engine = SimpleGenreBasedRecommendationEngine()
+        # self.recommendation_engine = SimpleGenreBasedRecommendationEngine()
         
         if openai_api_key:
             try:
@@ -245,27 +247,66 @@ class UnifiedLetterboxdAnalyzer:
             else:
                 profile_info = {}
 
-            # Load all CSV files
-            files_to_load = ['ratings', 'reviews', 'watched', 'diary', 'watchlist', 'comments']
+            # Load all CSV files - including likes data
+            files_to_load = ['ratings', 'reviews', 'watched', 'diary', 'watchlist', 'comments', 'likes']
             data = {}
 
             for file_name in files_to_load:
                 file_path = os.path.join(profile_path, f'{file_name}.csv')
                 if os.path.exists(file_path):
-                    data[file_name] = pd.read_csv(file_path)
+                    try:
+                        data[file_name] = pd.read_csv(file_path)
+                        print(f"✓ Loaded {file_name}.csv: {len(data[file_name])} entries")
+                    except Exception as e:
+                        print(f"Error loading {file_name}.csv: {e}")
+                        data[file_name] = pd.DataFrame()
                 else:
                     print(f"Warning: {file_name}.csv not found for {username}")
                     data[file_name] = pd.DataFrame()
+                    
+            # Also check for films.csv or all_films.csv (comprehensive film data)
+            comprehensive_files = ['films.csv', 'all_films.csv', 'films_comprehensive.csv']
+            for comp_file in comprehensive_files:
+                file_path = os.path.join(profile_path, comp_file)
+                if os.path.exists(file_path):
+                    try:
+                        data['all_films'] = pd.read_csv(file_path)
+                        print(f"✓ Loaded {comp_file}: {len(data['all_films'])} films")
+                        break
+                    except Exception as e:
+                        print(f"Error loading {comp_file}: {e}")
+            
+            if 'all_films' not in data:
+                data['all_films'] = pd.DataFrame()
 
-            # Load lists
-            lists_dir = os.path.join(profile_path, 'lists')
+            # Load lists from both lists.csv and lists/ directory
             lists = []
+            
+            # First check for lists.csv (summary file)
+            lists_csv = os.path.join(profile_path, 'lists.csv')
+            if os.path.exists(lists_csv):
+                try:
+                    lists_summary = pd.read_csv(lists_csv)
+                    if not lists_summary.empty:
+                        print(f"✓ Loaded lists.csv: {len(lists_summary)} lists")
+                        # Store as a summary DataFrame
+                        data['lists_summary'] = lists_summary
+                except Exception as e:
+                    print(f"Error loading lists.csv: {e}")
+                    
+            # Then check for individual list files in lists/ directory
+            lists_dir = os.path.join(profile_path, 'lists')
             if os.path.exists(lists_dir):
+                print(f"Loading individual lists from {lists_dir}/")
                 for list_file in os.listdir(lists_dir):
                     if list_file.endswith('.csv'):
-                        list_df = pd.read_csv(os.path.join(lists_dir, list_file))
-                        list_df['list_name'] = list_file.replace('.csv', '')
-                        lists.append(list_df)
+                        try:
+                            list_df = pd.read_csv(os.path.join(lists_dir, list_file))
+                            list_df['list_name'] = list_file.replace('.csv', '')
+                            lists.append(list_df)
+                            print(f"  ✓ Loaded {list_file}: {len(list_df)} items")
+                        except Exception as e:
+                            print(f"  Error loading {list_file}: {e}")
 
             profile = ProfileData(
                 username=username,
@@ -276,7 +317,9 @@ class UnifiedLetterboxdAnalyzer:
                 diary=data['diary'],
                 watchlist=data['watchlist'],
                 comments=data['comments'],
-                lists=lists
+                lists=lists,
+                likes=data.get('likes', pd.DataFrame()),
+                all_films=data.get('all_films', pd.DataFrame())
             )
 
             self.profiles[username] = profile
@@ -908,9 +951,16 @@ class UnifiedLetterboxdAnalyzer:
     def get_watchlist_movies(self, profile: ProfileData) -> list:
         """Get user's watchlist for better recommendations"""
         watchlist = []
-        if not profile.watchlist.empty:
+        
+        # Handle both old and new watchlist format
+        if hasattr(profile, 'watchlist') and not profile.watchlist.empty:
             for _, row in profile.watchlist.iterrows():
-                watchlist.append(f"{row['Name']} ({row['Year']})")
+                title = row.get('Name', row.get('Title', 'Unknown'))
+                year = row.get('Year', '')
+                if year:
+                    watchlist.append(f"{title} ({year})")
+                else:
+                    watchlist.append(title)
         return watchlist
 
     def analyze_detailed_preferences(self, profile: ProfileData) -> Dict:
