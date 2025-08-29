@@ -145,6 +145,11 @@ export interface SystemStats {
   active_scraping_jobs: number;
   global_avg_rating: number;
   last_updated: string;
+  trends?: {
+    profiles: { value: number; is_positive: boolean };
+    movies: { value: number; is_positive: boolean };
+    reviews: { value: number; is_positive: boolean };
+  };
 }
 
 export interface TopMovie {

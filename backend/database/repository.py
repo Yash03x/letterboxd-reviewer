@@ -264,13 +264,17 @@ class AnalyticsRepository:
             Rating.rating.isnot(None)
         ).scalar() or 0.0
         
+        # Calculate trends based on recent activity
+        trends = self._calculate_trends()
+        
         return {
             "total_profiles": total_profiles,
             "total_movies_tracked": total_unique_movies,
             "total_reviews": total_reviews,
             "active_scraping_jobs": active_jobs,
             "global_avg_rating": round(float(global_avg_rating), 2),
-            "last_updated": datetime.utcnow().isoformat()
+            "last_updated": datetime.utcnow().isoformat(),
+            "trends": trends
         }
     
     def get_top_rated_movies(self, limit: int = 50) -> List[Dict]:
@@ -299,3 +303,63 @@ class AnalyticsRepository:
             }
             for title, year, avg_rating, count in results
         ]
+
+    def _calculate_trends(self) -> Dict[str, Dict[str, Any]]:
+        """Calculate trends based on recent activity (current month vs previous month)"""
+        from datetime import datetime, timedelta
+        
+        now = datetime.utcnow()
+        current_month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        last_month_start = (current_month_start - timedelta(days=1)).replace(day=1)
+        
+        # Current month stats
+        current_month_profiles = self.db.query(func.count(Profile.id)).filter(
+            Profile.created_at >= current_month_start
+        ).scalar()
+        
+        current_month_movies = self.db.query(func.count(Rating.id)).filter(
+            Rating.created_at >= current_month_start
+        ).scalar()
+        
+        current_month_reviews = self.db.query(func.count(Review.id)).filter(
+            Review.created_at >= current_month_start
+        ).scalar()
+        
+        # Previous month stats
+        last_month_profiles = self.db.query(func.count(Profile.id)).filter(
+            Profile.created_at >= last_month_start,
+            Profile.created_at < current_month_start
+        ).scalar()
+        
+        last_month_movies = self.db.query(func.count(Rating.id)).filter(
+            Rating.created_at >= last_month_start,
+            Rating.created_at < current_month_start
+        ).scalar()
+        
+        last_month_reviews = self.db.query(func.count(Review.id)).filter(
+            Review.created_at >= last_month_start,
+            Review.created_at < current_month_start
+        ).scalar()
+        
+        # Calculate percentage changes
+        def calculate_percentage_change(current, previous):
+            if previous == 0:
+                return 100.0 if current > 0 else 0.0
+            return ((current - previous) / previous) * 100
+        
+        trends = {
+            "profiles": {
+                "value": calculate_percentage_change(current_month_profiles, last_month_profiles),
+                "is_positive": current_month_profiles >= last_month_profiles
+            },
+            "movies": {
+                "value": calculate_percentage_change(current_month_movies, last_month_movies),
+                "is_positive": current_month_movies >= last_month_movies
+            },
+            "reviews": {
+                "value": calculate_percentage_change(current_month_reviews, last_month_reviews),
+                "is_positive": current_month_reviews >= last_month_reviews
+            }
+        }
+        
+        return trends

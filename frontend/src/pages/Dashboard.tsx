@@ -36,7 +36,7 @@ const Dashboard: React.FC = () => {
     refetchInterval: 30000, // Auto-refresh every 30 seconds
   });
 
-  const { data: analytics, isLoading: analyticsLoading } = useQuery({
+  const { data: analytics, isLoading: analyticsLoading, refetch: refetchAnalytics } = useQuery({
     queryKey: ['dashboard-analytics'],
     queryFn: dashboardApi.getAnalytics,
     refetchInterval: 30000, // Auto-refresh every 30 seconds
@@ -81,8 +81,16 @@ const Dashboard: React.FC = () => {
   };
 
   // Handle manual refresh all
-  const handleRefreshAll = () => {
-    refetch();
+  const handleRefreshAll = async () => {
+    try {
+      // Refetch both profiles and analytics data
+      await Promise.all([
+        refetch(),
+        refetchAnalytics()
+      ]);
+    } catch (error) {
+      console.error('Failed to refresh data:', error);
+    }
   };
 
   if (isLoading) return <LoadingSpinner />;
@@ -96,6 +104,9 @@ const Dashboard: React.FC = () => {
   const totalMovies = analytics?.system_stats?.total_movies_tracked ?? 0;
   const totalReviews = analytics?.system_stats?.total_reviews ?? 0;
   const avgRating = analytics?.system_stats?.global_avg_rating ?? 0;
+  
+  // Get calculated trends from backend
+  const trends = analytics?.system_stats?.trends;
 
   // Calculate completion rate based on profile statuses
   const activeProfiles = profilesArray.filter(p => p.scraping_status === 'completed').length;
@@ -172,7 +183,7 @@ const Dashboard: React.FC = () => {
           value={totalProfiles}
           subtitle="Active community members"
           icon={Users}
-          trend={{ value: 12.5, isPositive: true }}
+          trend={trends?.profiles ? { value: Math.abs(trends.profiles.value), isPositive: trends.profiles.is_positive } : undefined}
           delay={0}
         />
         
@@ -181,7 +192,7 @@ const Dashboard: React.FC = () => {
           value={totalMovies}
           subtitle="Across all profiles"
           icon={Film}
-          trend={{ value: 8.3, isPositive: true }}
+          trend={trends?.movies ? { value: Math.abs(trends.movies.value), isPositive: trends.movies.is_positive } : undefined}
           gradient="from-blue-500/20 to-blue-600/10"
           delay={0.1}
         />
@@ -191,7 +202,7 @@ const Dashboard: React.FC = () => {
           value={totalReviews}
           subtitle="Community insights"
           icon={MessageCircle}
-          trend={{ value: 15.2, isPositive: true }}
+          trend={trends?.reviews ? { value: Math.abs(trends.reviews.value), isPositive: trends.reviews.is_positive } : undefined}
           gradient="from-purple-500/20 to-purple-600/10"
           delay={0.2}
         />
@@ -201,7 +212,6 @@ const Dashboard: React.FC = () => {
           value={avgRating.toFixed(1)}
           subtitle={`${completionRate.toFixed(0)}% completion rate`}
           icon={Star}
-          trend={{ value: 2.1, isPositive: true }}
           gradient="from-yellow-500/20 to-yellow-600/10"
           delay={0.3}
         />
