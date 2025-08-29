@@ -566,236 +566,158 @@ class EnhancedLetterboxdScraper:
         print(f"✓ Found {len(lists)} custom lists")
         return lists
     
-    def save_all_data(self):
-        """Save all scraped data to CSV files in organized structure."""
-        print(f"💾 Saving all data to {self.output_dir}...")
+    def _write_csv(self, file_path: str, data: List[Dict], fieldnames: List[str]):
+        """Helper function to write data to a CSV file."""
+        if not data:
+            return
         
-        # Save profile info
-        profile_file = os.path.join(self.output_dir, "profile.csv")
-        with open(profile_file, 'w', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=[
-                'Username', 'Display_Name', 'Bio', 'Location', 'Website', 'Join_Date',
-                'Avatar_URL', 'Total_Films', 'Total_Reviews', 'Total_Lists',
-                'Following_Count', 'Followers_Count'
-            ])
+        full_path = os.path.join(self.output_dir, file_path)
+        with open(full_path, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
-            writer.writerow({
-                'Username': self.profile_info.username,
-                'Display_Name': self.profile_info.display_name,
-                'Bio': self.profile_info.bio,
-                'Location': self.profile_info.location,
-                'Website': self.profile_info.website,
-                'Join_Date': self.profile_info.join_date,
-                'Avatar_URL': self.profile_info.avatar_url,
-                'Total_Films': self.profile_info.total_films,
-                'Total_Reviews': self.profile_info.total_reviews,
-                'Total_Lists': self.profile_info.total_lists,
-                'Following_Count': self.profile_info.following_count,
-                'Followers_Count': self.profile_info.followers_count
-            })
+            writer.writerows(data)
+
+    def _save_profile_info(self):
+        """Saves the main profile information."""
+        fieldnames = [
+            'Username', 'Display_Name', 'Bio', 'Location', 'Website', 'Join_Date',
+            'Avatar_URL', 'Total_Films', 'Total_Reviews', 'Total_Lists',
+            'Following_Count', 'Followers_Count'
+        ]
+        data = [{
+            'Username': self.profile_info.username,
+            'Display_Name': self.profile_info.display_name,
+            'Bio': self.profile_info.bio,
+            'Location': self.profile_info.location,
+            'Website': self.profile_info.website,
+            'Join_Date': self.profile_info.join_date,
+            'Avatar_URL': self.profile_info.avatar_url,
+            'Total_Films': self.profile_info.total_films,
+            'Total_Reviews': self.profile_info.total_reviews,
+            'Total_Lists': self.profile_info.total_lists,
+            'Following_Count': self.profile_info.following_count,
+            'Followers_Count': self.profile_info.followers_count
+        }]
+        self._write_csv("profile.csv", data, fieldnames)
+
+    def _save_diary_entries(self):
+        """Saves diary entries."""
+        fieldnames = ['Name', 'Year', 'Watched Date', 'Rating', 'Is_Rewatch', 'Is_Liked', 'Has_Review', 'Film_URL']
+        data = [{
+            'Name': entry['title'], 'Year': entry['year'], 'Watched Date': entry['watch_date'],
+            'Rating': entry['rating'], 'Is_Rewatch': 'Yes' if entry['is_rewatch'] else 'No',
+            'Is_Liked': 'Yes' if entry['is_liked'] else 'No', 'Has_Review': 'Yes' if entry['has_review'] else 'No',
+            'Film_URL': entry['film_url']
+        } for entry in self.diary_entries]
+        self._write_csv("diary.csv", data, fieldnames)
+
+    def _save_reviews(self):
+        """Saves reviews."""
+        fieldnames = ['Name', 'Year', 'Rating', 'Review', 'Review_Date', 'Review_Likes', 'Film_URL']
+        data = [{
+            'Name': review['title'], 'Year': review['year'], 'Rating': review['rating'],
+            'Review': review['review_text'], 'Review_Date': review['review_date'],
+            'Review_Likes': review['review_likes'], 'Film_URL': review['film_url']
+        } for review in self.reviews_data]
+        self._write_csv("reviews.csv", data, fieldnames)
+
+    def _save_watchlist(self):
+        """Saves the watchlist."""
+        fieldnames = ['Name', 'Year', 'Film_URL', 'Poster_URL']
+        data = [{
+            'Name': item['title'], 'Year': item['year'], 'Film_URL': item['film_url'],
+            'Poster_URL': item['poster_url']
+        } for item in self.watchlist_data]
+        self._write_csv("watchlist.csv", data, fieldnames)
+
+    def _save_custom_lists(self):
+        """Saves custom lists."""
+        fieldnames = ['Title', 'Description', 'Film_Count', 'URL']
+        data = [{
+            'Title': li['title'], 'Description': li['description'],
+            'Film_Count': li['film_count'], 'URL': li['url']
+        } for li in self.lists_data]
+        self._write_csv("lists.csv", data, fieldnames)
+
+    def _save_enriched_ratings(self) -> int:
+        """Enriches and saves the ratings file, returning the count of rated films."""
+        diary_lookup = {f"{e['title']}_{e['year'] or 'no_year'}": e for e in self.diary_entries if e['title']}
+        review_lookup = {f"{r['title']}_{r['year'] or 'no_year'}": r for r in self.reviews_data if r['title']}
         
-        # Save diary entries
-        if self.diary_entries:
-            diary_file = os.path.join(self.output_dir, "diary.csv")
-            with open(diary_file, 'w', newline='', encoding='utf-8') as f:
-                writer = csv.DictWriter(f, fieldnames=[
-                    'Name', 'Year', 'Watched Date', 'Rating', 'Is_Rewatch', 'Is_Liked', 'Has_Review', 'Film_URL'
-                ])
-                writer.writeheader()
-                for entry in self.diary_entries:
-                    writer.writerow({
-                        'Name': entry['title'],
-                        'Year': entry['year'],
-                        'Watched Date': entry['watch_date'],
-                        'Rating': entry['rating'],
-                        'Is_Rewatch': 'Yes' if entry['is_rewatch'] else 'No',
-                        'Is_Liked': 'Yes' if entry['is_liked'] else 'No',
-                        'Has_Review': 'Yes' if entry['has_review'] else 'No',
-                        'Film_URL': entry['film_url']
-                    })
-        
-        # Save reviews
-        if self.reviews_data:
-            reviews_file = os.path.join(self.output_dir, "reviews.csv")
-            with open(reviews_file, 'w', newline='', encoding='utf-8') as f:
-                writer = csv.DictWriter(f, fieldnames=[
-                    'Name', 'Year', 'Rating', 'Review', 'Review_Date', 'Review_Likes', 'Film_URL'
-                ])
-                writer.writeheader()
-                for review in self.reviews_data:
-                    writer.writerow({
-                        'Name': review['title'],
-                        'Year': review['year'],
-                        'Rating': review['rating'],
-                        'Review': review['review_text'],
-                        'Review_Date': review['review_date'],
-                        'Review_Likes': review['review_likes'],
-                        'Film_URL': review['film_url']
-                    })
-        
-        # Save watchlist
-        if self.watchlist_data:
-            watchlist_file = os.path.join(self.output_dir, "watchlist.csv")
-            with open(watchlist_file, 'w', newline='', encoding='utf-8') as f:
-                writer = csv.DictWriter(f, fieldnames=[
-                    'Name', 'Year', 'Film_URL', 'Poster_URL'
-                ])
-                writer.writeheader()
-                for item in self.watchlist_data:
-                    writer.writerow({
-                        'Name': item['title'],
-                        'Year': item['year'],
-                        'Film_URL': item['film_url'],
-                        'Poster_URL': item['poster_url']
-                    })
-        
-        # Save lists info
-        if self.lists_data:
-            lists_file = os.path.join(self.output_dir, "lists.csv")
-            with open(lists_file, 'w', newline='', encoding='utf-8') as f:
-                writer = csv.DictWriter(f, fieldnames=[
-                    'Title', 'Description', 'Film_Count', 'URL'
-                ])
-                writer.writeheader()
-                for list_item in self.lists_data:
-                    writer.writerow({
-                        'Title': list_item['title'],
-                        'Description': list_item['description'],
-                        'Film_Count': list_item['film_count'],
-                        'URL': list_item['url']
-                    })
-        
-        # Create a ratings file with ONLY films that have actual ratings
-        ratings_file = os.path.join(self.output_dir, "ratings.csv")
         all_ratings = []
-        
-        # UNIVERSAL SET: All films from /films/ pages
-        # Ratings file: SUBSET containing only films with actual ratings
-        # Diary and reviews are SUBSETS that provide additional metadata
-        
-        # Create lookup dictionaries for enrichment
-        diary_lookup = {}
-        for entry in self.diary_entries:
-            if entry['title']:
-                # Better key handling for films without years
-                key = f"{entry['title']}_{entry['year'] or 'no_year'}"
-                diary_lookup[key] = entry
-        
-        review_lookup = {}
-        for review in self.reviews_data:
-            if review['title']:
-                key = f"{review['title']}_{review['year'] or 'no_year'}"
-                review_lookup[key] = review
-        
-        # Start with films_data as the UNIVERSAL SET and enrich with diary/review data
         for film in self.films_data:
-            if film['title']:
-                key = f"{film['title']}_{film['year'] or 'no_year'}"
-                
-                # Start with film data
-                rating_entry = {
-                    'Name': film['title'],
-                    'Year': film['year'] or '',
-                    'Rating': film['rating'] or ''
-                }
-                
-                # Enrich with diary data if available (diary has priority for ratings/dates)
-                if key in diary_lookup:
-                    diary_entry = diary_lookup[key]
-                    if diary_entry['rating'] and not rating_entry['Rating']:
-                        rating_entry['Rating'] = diary_entry['rating']
-                
-                # Enrich with review data if available
-                if key in review_lookup:
-                    review_entry = review_lookup[key]
-                    if review_entry['rating'] and not rating_entry['Rating']:
-                        rating_entry['Rating'] = review_entry['rating']
-                
-                # Only add to ratings.csv if the film actually has a rating
-                if rating_entry['Rating'] and str(rating_entry['Rating']).strip():
-                    all_ratings.append(rating_entry)
+            if not film['title']:
+                continue
+
+            key = f"{film['title']}_{film['year'] or 'no_year'}"
+            rating_entry = {'Name': film['title'], 'Year': film['year'] or '', 'Rating': film['rating'] or ''}
+
+            diary_entry = diary_lookup.get(key)
+            if diary_entry and diary_entry['rating'] and not rating_entry['Rating']:
+                rating_entry['Rating'] = diary_entry['rating']
+
+            review_entry = review_lookup.get(key)
+            if review_entry and review_entry['rating'] and not rating_entry['Rating']:
+                rating_entry['Rating'] = review_entry['rating']
+
+            if rating_entry['Rating'] and str(rating_entry['Rating']).strip():
+                all_ratings.append(rating_entry)
         
-        if all_ratings:
-            with open(ratings_file, 'w', newline='', encoding='utf-8') as f:
-                writer = csv.DictWriter(f, fieldnames=['Name', 'Year', 'Rating'])
-                writer.writeheader()
-                for rating in all_ratings:
-                    writer.writerow(rating)
-        
-        # Create likes.csv file for films that are liked but not necessarily rated
-        likes_file = os.path.join(self.output_dir, "likes.csv")
+        self._write_csv("ratings.csv", all_ratings, ['Name', 'Year', 'Rating'])
+        return len(all_ratings)
+
+    def _save_likes(self):
+        """Saves liked films."""
         all_likes = []
-        
-        # Extract likes from films_data
+        seen_likes = set()
+
         for film in self.films_data:
             if film['title'] and film.get('is_liked', False):
-                like_entry = {
-                    'Name': film['title'],
-                    'Year': film['year'] or '',
-                    'Date': ''  # Likes don't typically have dates in basic film data
-                }
-                all_likes.append(like_entry)
-        
-        # Also check diary entries for additional likes
+                like_key = f"{film['title']}_{film['year'] or 'no_year'}"
+                if like_key not in seen_likes:
+                    all_likes.append({'Name': film['title'], 'Year': film['year'] or '', 'Date': ''})
+                    seen_likes.add(like_key)
+
         for entry in self.diary_entries:
             if entry['title'] and entry.get('is_liked', False):
-                # Avoid duplicates
                 like_key = f"{entry['title']}_{entry['year'] or 'no_year'}"
-                film_key = f"{film.get('title', '')}_{film.get('year', 'no_year') or 'no_year'}"
-                
-                # Only add if not already in likes from films_data
-                if not any(like_key == f"{like['Name']}_{like['Year'] or 'no_year'}" for like in all_likes):
-                    like_entry = {
-                        'Name': entry['title'],
-                        'Year': entry['year'] or '',
-                        'Date': entry.get('watch_date', '')
-                    }
-                    all_likes.append(like_entry)
+                if like_key not in seen_likes:
+                    all_likes.append({'Name': entry['title'], 'Year': entry['year'] or '', 'Date': entry.get('watch_date', '')})
+                    seen_likes.add(like_key)
         
-        if all_likes:
-            with open(likes_file, 'w', newline='', encoding='utf-8') as f:
-                writer = csv.DictWriter(f, fieldnames=['Name', 'Year', 'Date'])
-                writer.writeheader()
-                for like in all_likes:
-                    writer.writerow(like)
+        self._write_csv("likes.csv", all_likes, ['Name', 'Year', 'Date'])
+
+    def _save_comprehensive_films(self):
+        """Saves the comprehensive film data."""
+        fieldnames = ['Title', 'Year', 'Rating', 'Film_ID', 'Slug', 'Poster_URL', 'Film_URL', 'Has_Review', 'Movie_ID']
+        data = [{
+            'Title': film.get('title', ''), 'Year': film.get('year', ''), 'Rating': film.get('rating', ''),
+            'Film_ID': film.get('film_id', ''), 'Slug': film.get('slug', ''),
+            'Poster_URL': film.get('poster_url', ''), 'Film_URL': film.get('film_url', ''),
+            'Has_Review': 'Yes' if film.get('has_review') else 'No', 'Movie_ID': film.get('movie_id', '')
+        } for film in self.films_data]
+        self._write_csv("films_comprehensive.csv", data, fieldnames)
+
+    def save_all_data(self):
+        """Save all scraped data to CSV files in an organized structure."""
+        print(f"💾 Saving all data to {self.output_dir}...")
         
-        # Save comprehensive films data with ALL metadata
-        if self.films_data:
-            films_file = os.path.join(self.output_dir, "films_comprehensive.csv")
-            with open(films_file, 'w', newline='', encoding='utf-8') as f:
-                fieldnames = [
-                    'Title', 'Year', 'Rating', 'Film_ID', 'Slug', 'Poster_URL', 
-                    'Film_URL', 'Has_Review', 'Movie_ID'
-                ]
-                writer = csv.DictWriter(f, fieldnames=fieldnames)
-                writer.writeheader()
-                for film in self.films_data:
-                    writer.writerow({
-                        'Title': film.get('title', ''),
-                        'Year': film.get('year', ''),
-                        'Rating': film.get('rating', ''),
-                        'Film_ID': film.get('film_id', ''),
-                        'Slug': film.get('slug', ''),
-                        'Poster_URL': film.get('poster_url', ''),
-                        'Film_URL': film.get('film_url', ''),
-                        'Has_Review': 'Yes' if film.get('has_review') else 'No',
-                        'Movie_ID': film.get('movie_id', '')
-                    })
+        self._save_profile_info()
+        self._save_diary_entries()
+        self._save_reviews()
+        self._save_watchlist()
+        self._save_custom_lists()
+        rated_films_count = self._save_enriched_ratings()
+        self._save_likes()
+        self._save_comprehensive_films()
         
         print(f"✅ All data saved to {self.output_dir}/")
-        print(f"   📋 Profile info: profile.csv")
-        print(f"   🎬 All films: films_comprehensive.csv ({len(self.films_data)} films)")
-        print(f"   📅 Diary entries: diary.csv ({len(self.diary_entries)} entries)")
-        print(f"   📝 Reviews: reviews.csv ({len(self.reviews_data)} reviews)")
-        print(f"   📋 Watchlist: watchlist.csv ({len(self.watchlist_data)} items)")
-        print(f"   📚 Lists: lists.csv ({len(self.lists_data)} lists)")
-        print(f"   ⭐ Ratings: ratings.csv ({len(all_ratings)} rated films - filtered from {len(self.films_data)} total films)")
-        print(f"")
+        print(f"   - Profile info, Diary, Reviews, Watchlist, Lists, Ratings, Likes, and Comprehensive films.")
         print(f"📊 Data Summary:")
-        print(f"   • Total films discovered: {len(self.films_data)}")
-        print(f"   • Films with ratings: {len(all_ratings)}")
-        print(f"   • Diary entries: {len(self.diary_entries)}")
-        print(f"   • Reviews: {len(self.reviews_data)}")
+        print(f"   - Total films discovered: {len(self.films_data)}")
+        print(f"   - Films with ratings: {rated_films_count}")
+        print(f"   - Diary entries: {len(self.diary_entries)}")
+        print(f"   - Reviews: {len(self.reviews_data)}")
     
     def scrape_all(self):
         """Main method to scrape all available data."""
@@ -834,569 +756,6 @@ class EnhancedLetterboxdScraper:
         rating = full_stars + (half_stars * 0.5)
         return rating if rating > 0 else None
     
-    def extract_movie_data_legacy(self, movie_element) -> Optional[Dict]:
-        """Extract movie data from a single movie tile element."""
-        try:
-            # Debug: Print the HTML structure to understand what we're working with
-            if self.debug:
-                print(f"DEBUG HTML: {movie_element}")
-                print("=" * 80)
-            
-            # Get title from multiple possible sources
-            title = None
-            
-            # Method 1: From img alt attribute
-            title_element = movie_element.find('img')
-            if title_element:
-                title = title_element.get('alt', '').strip()
-            
-            # Method 2: From data attributes
-            if not title:
-                title = movie_element.get('data-film-name', '').strip()
-            
-            # Method 3: From film link (look for user-specific film URLs)
-            if not title:
-                film_links = movie_element.find_all('a')
-                for link in film_links:
-                    href = link.get('href', '')
-                    if '/film/' in href:
-                        import re
-                        # Look for pattern like /username/film/movie-name/
-                        title_match = re.search(r'/film/([^/]+)/?', href)
-                        if title_match:
-                            title = title_match.group(1).replace('-', ' ').title()
-                            break
-            
-            # Method 4: From any text content
-            if not title:
-                try:
-                    text_content = movie_element.get_text().strip()
-                    if text_content and len(text_content) < 100:  # Reasonable title length
-                        title = text_content
-                except AttributeError:
-                    pass
-                
-            if not title:
-                if self.debug:
-                    print("No title found, skipping element")
-                return None
-            
-            # Extract year - Try multiple approaches
-            year = None
-            
-            # Method 1: Look for year in data attributes (most reliable)
-            react_component = movie_element.find('div', class_='react-component')
-            if react_component:
-                full_name = react_component.get('data-item-full-display-name', '')
-                if full_name:
-                    import re
-                    year_match = re.search(r'\((\d{4})\)', full_name)
-                    if year_match:
-                        year = int(year_match.group(1))
-                        if self.debug:
-                            print(f"Found year in data attribute: {full_name} -> {year}")
-            
-            # Method 2: Look for year in poster URL or data attributes  
-            if not year and title_element:
-                poster_url = title_element.get('src', '') or title_element.get('data-src', '')
-                if poster_url:
-                    import re
-                    year_match = re.search(r'/(\d{4})/', poster_url)
-                    if year_match:
-                        year = int(year_match.group(1))
-            
-            # Method 3: Look for year in film slug/URL
-            if not year:
-                # Look for any link that contains /film/
-                film_links = movie_element.find_all('a', href=lambda x: x and '/film/' in x)
-                for film_link in film_links:
-                    href = film_link.get('href')
-                    import re
-                    # Letterboxd URLs often contain year: /film/movie-name-year/
-                    year_match = re.search(r'/film/[^/]+-(\d{4})/?', href)
-                    if year_match:
-                        year = int(year_match.group(1))
-                        break
-                    # Also try without the dash requirement
-                    year_match = re.search(r'/film/.*?(\d{4})/?', href)
-                    if year_match:
-                        year = int(year_match.group(1))
-                        break
-            
-            # Method 4: Extract from title if in parentheses
-            if not year and title:
-                import re
-                year_match = re.search(r'\((\d{4})\)', title)
-                if year_match:
-                    year = int(year_match.group(1))
-                    # Remove year from title
-                    title = re.sub(r'\s*\(\d{4}\)\s*', '', title).strip()
-            
-            # Extract rating (stars) - Look for the specific rating structure
-            rating = None
-            
-            # Method 1: Look for span with rating class (most common)
-            rating_element = movie_element.find('span', class_=lambda x: x and 'rating' in x)
-            if rating_element:
-                stars_text = rating_element.get_text()
-                rating = self.convert_stars_to_rating(stars_text)
-                if self.debug and rating:
-                    print(f"Found rating in span: {stars_text} -> {rating}")
-            
-            # Method 2: Look for any element with rating class
-            if not rating:
-                rating_element = movie_element.find(class_=lambda x: x and 'rating' in x.lower())
-                if rating_element:
-                    stars_text = rating_element.get_text()
-                    rating = self.convert_stars_to_rating(stars_text)
-                    if self.debug and rating:
-                        print(f"Found rating in element: {stars_text} -> {rating}")
-            
-            # Method 3: Look for stars in any text content
-            if not rating:
-                all_text = movie_element.get_text()
-                if '★' in all_text or '☆' in all_text:
-                    rating = self.convert_stars_to_rating(all_text)
-                    if self.debug and rating:
-                        print(f"Found rating in text: {all_text} -> {rating}")
-            
-            # Create unique identifier to avoid duplicates
-            # Be more permissive with movies that don't have years to avoid false positives
-            if year:
-                movie_id = f"{title}_{year}"
-            else:
-                # For movies without years, make each one unique by adding position info
-                import time
-                movie_id = f"{title}_no_year_{int(time.time() * 1000000) % 1000000}"
-            
-            # Extract ALL possible metadata
-            film_id = None
-            slug = None
-            poster_url = None
-            film_link = None
-            has_review = False
-            full_display_name = None
-            item_name = None
-            details_endpoint = None
-            cache_busting_key = None
-            component_class = None
-            empty_poster_src = None
-            has_default_poster = None
-            image_height = None
-            image_width = None
-            is_linked = None
-            is_likeable = None
-            is_rateable = None
-            is_watchable = None
-            request_poster_metadata = None
-            show_menu = None
-            target_link = None
-            postered_identifier = None
-            item_uid = None
-            rating_class = None
-            
-            if react_component:
-                # Basic film data
-                film_id = react_component.get('data-film-id')
-                slug = react_component.get('data-item-slug')
-                poster_url = react_component.get('data-poster-url')
-                film_link = react_component.get('data-item-link')
-                full_display_name = react_component.get('data-item-full-display-name')
-                item_name = react_component.get('data-item-name')
-                target_link = react_component.get('data-target-link')
-                
-                # Technical metadata
-                details_endpoint = react_component.get('data-details-endpoint')
-                cache_busting_key = react_component.get('data-cache-busting-key')
-                component_class = react_component.get('data-component-class')
-                empty_poster_src = react_component.get('data-empty-poster-src')
-                postered_identifier = react_component.get('data-postered-identifier')
-                
-                # Image dimensions
-                image_height = react_component.get('data-image-height')
-                image_width = react_component.get('data-image-width')
-                
-                # Boolean flags (convert to Yes/No)
-                has_default_poster = react_component.get('data-has-default-poster') == 'true'
-                is_linked = react_component.get('data-is-linked') == 'true'
-                is_likeable = react_component.get('data-likeable') == 'true'
-                is_rateable = react_component.get('data-rateable') == 'true'
-                is_watchable = react_component.get('data-watchable') == 'true'
-                request_poster_metadata = react_component.get('data-request-poster-metadata') == 'true'
-                show_menu = react_component.get('data-show-menu') == 'true'
-            
-            # Check for review
-            review_link = movie_element.find('a', class_='review-micro')
-            has_review = review_link is not None
-            
-            # Extract viewing data
-            viewing_data = movie_element.find('p', class_='poster-viewingdata')
-            if viewing_data:
-                item_uid = viewing_data.get('data-item-uid')
-                
-                # Get rating class for more detailed rating info
-                rating_span = viewing_data.find('span', class_=lambda x: x and 'rating' in x)
-                if rating_span:
-                    rating_class = ' '.join(rating_span.get('class', []))
-            
-            if self.debug:
-                print(f"EXTRACTED: Title='{title}', Year={year}, Rating={rating}")
-                print(f"  Extra: ID={film_id}, Slug={slug}, HasReview={has_review}")
-                print("-" * 40)
-            
-            return {
-                'title': title,
-                'year': year,
-                'rating': rating,
-                'id': movie_id,
-                'film_id': film_id,
-                'slug': slug,
-                'poster_url': poster_url,
-                'film_link': film_link,
-                'has_review': has_review,
-                'full_display_name': full_display_name,
-                'item_name': item_name,
-                'target_link': target_link,
-                'details_endpoint': details_endpoint,
-                'cache_busting_key': cache_busting_key,
-                'component_class': component_class,
-                'empty_poster_src': empty_poster_src,
-                'postered_identifier': postered_identifier,
-                'image_height': image_height,
-                'image_width': image_width,
-                'has_default_poster': has_default_poster,
-                'is_linked': is_linked,
-                'is_likeable': is_likeable,
-                'is_rateable': is_rateable,
-                'is_watchable': is_watchable,
-                'request_poster_metadata': request_poster_metadata,
-                'show_menu': show_menu,
-                'item_uid': item_uid,
-                'rating_class': rating_class
-            }
-            
-        except Exception as e:
-            print(f"Error extracting movie data: {e}")
-            return None
-    
-    def get_page_movies(self, page_url: str) -> Tuple[List[Dict], bool]:
-        """Fetch and parse movies from a single page."""
-        movies = []
-        has_next_page = False
-        
-        try:
-            response = self.fetch_with_retry(page_url)
-            if not response:
-                return movies, has_next_page
-                
-            soup = BeautifulSoup(response.content, 'html.parser')
-            
-            # Find movie containers based on the actual Letterboxd structure
-            movie_containers = []
-            
-            # Method 1: Look for poster-viewingdata containers (these contain ratings and film links)
-            poster_data_containers = soup.find_all('p', class_='poster-viewingdata')
-            
-            # For each poster-viewingdata, find its associated film poster
-            for data_container in poster_data_containers:
-                # Find the parent that contains both the poster and the data
-                parent = data_container.parent
-                if parent:
-                    movie_containers.append(parent)
-            
-            # Method 2: If no viewingdata found, look for direct film links and their containers
-            if not movie_containers:
-                film_links = soup.find_all('a', href=lambda x: x and '/film/' in x)
-                for link in film_links:
-                    # Get the container that has both the link and potential poster
-                    container = link.parent
-                    while container and container.name in ['span', 'p', 'a']:
-                        container = container.parent
-                    if container and container not in movie_containers:
-                        movie_containers.append(container)
-            
-            for container in movie_containers:
-                movie_data = self.extract_movie_data(container)
-                if movie_data:
-                    if movie_data['id'] not in self.movies_seen:
-                        movies.append(movie_data)
-                        self.movies_seen.add(movie_data['id'])
-                    # Note: We used to skip duplicates here, but now allow them for movies without years
-            
-            # Check for next page
-            next_link = soup.find('a', class_='next') or soup.find('a', string='Next')
-            has_next_page = next_link is not None
-            
-        except Exception as e:
-            print(f"Error processing page {page_url}: {e}")
-            
-        return movies, has_next_page
-    
-    def fetch_with_retry(self, url: str, max_retries: int = 3) -> Optional[requests.Response]:
-        """Fetch URL with exponential backoff retry logic."""
-        for attempt in range(max_retries):
-            try:
-                response = self.session.get(url, timeout=10)
-                response.raise_for_status()
-                return response
-                
-            except requests.exceptions.RequestException as e:
-                wait_time = (2 ** attempt) + 1  # Exponential backoff
-                print(f"Attempt {attempt + 1} failed for {url}: {e}")
-                
-                if attempt < max_retries - 1:
-                    print(f"Retrying in {wait_time} seconds...")
-                    time.sleep(wait_time)
-                else:
-                    print(f"Failed to fetch {url} after {max_retries} attempts")
-                    return None
-    
-    def extract_enhanced_movie_data(self, movie_element) -> Optional[Dict]:
-        """Extract comprehensive movie data using enhanced methods."""
-        try:
-            # Get title from multiple possible sources
-            title = None
-            
-            # Method 1: From img alt attribute
-            title_element = movie_element.find('img')
-            if title_element:
-                title = title_element.get('alt', '').strip()
-            
-            # Method 2: From data attributes
-            if not title:
-                title = movie_element.get('data-film-name', '').strip()
-            
-            # Method 3: From film link
-            if not title:
-                film_links = movie_element.find_all('a')
-                for link in film_links:
-                    href = link.get('href', '')
-                    if '/film/' in href:
-                        import re
-                        title_match = re.search(r'/film/([^/]+)/?', href)
-                        if title_match:
-                            title = title_match.group(1).replace('-', ' ').title()
-                            break
-                
-            if not title:
-                return None
-            
-            # Extract year - Multiple approaches
-            year = None
-            
-            # Method 1: Look for year in data attributes
-            react_component = movie_element.find('div', class_='react-component')
-            if react_component:
-                full_name = react_component.get('data-item-full-display-name', '')
-                if full_name:
-                    import re
-                    year_match = re.search(r'\((\d{4})\)', full_name)
-                    if year_match:
-                        year = int(year_match.group(1))
-            
-            # Method 2: Look for year in film slug/URL
-            if not year:
-                film_links = movie_element.find_all('a', href=lambda x: x and '/film/' in x)
-                for film_link in film_links:
-                    href = film_link.get('href')
-                    import re
-                    year_match = re.search(r'/film/[^/]+-(\d{4})/?', href)
-                    if year_match:
-                        year = int(year_match.group(1))
-                        break
-            
-            # Method 3: Extract from title if in parentheses
-            if not year and title:
-                import re
-                year_match = re.search(r'\((\d{4})\)', title)
-                if year_match:
-                    year = int(year_match.group(1))
-                    title = re.sub(r'\s*\(\d{4}\)\s*', '', title).strip()
-            
-            # Extract rating (comprehensive)
-            rating = None
-            rating_element = movie_element.find('span', class_=lambda x: x and 'rating' in x)
-            if rating_element:
-                stars_text = rating_element.get_text()
-                rating = self.convert_stars_to_rating(stars_text)
-            
-            # Extract comprehensive metadata
-            film_id = None
-            slug = None
-            poster_url = None
-            film_link = None
-            has_review = False
-            
-            if react_component:
-                film_id = react_component.get('data-film-id')
-                slug = react_component.get('data-item-slug') 
-                poster_url = react_component.get('data-poster-url')
-                film_link = react_component.get('data-item-link')
-            
-            # Check for review
-            review_link = movie_element.find('a', class_='review-micro')
-            has_review = review_link is not None
-            
-            # Create unique identifier
-            if year:
-                movie_id = f"{title}_{year}"
-            else:
-                import time
-                movie_id = f"{title}_no_year_{int(time.time() * 1000000) % 1000000}"
-            
-            return {
-                'title': title,
-                'year': year,
-                'rating': rating,
-                'film_id': film_id,
-                'slug': slug,
-                'poster_url': poster_url,
-                'film_url': film_link,
-                'has_review': has_review,
-                'movie_id': movie_id,
-                'review_text': '',
-                'is_rewatch': False,
-                'is_liked': False,
-                'watch_date': None
-            }
-            
-        except Exception as e:
-            if self.debug:
-                print(f"Error extracting enhanced movie data: {e}")
-            return None
-
-    def scrape_all_films(self) -> List[Dict]:
-        """Scrape all films from all pages using enhanced extraction."""
-        print(f"🎬 Scraping all films for {self.username}...")
-        
-        all_films = []
-        page_num = 1
-        movies_seen = set()
-        
-        while True:
-            # Construct page URL
-            if page_num == 1:
-                page_url = self.urls['films']
-            else:
-                page_url = f"{self.urls['films']}page/{page_num}/"
-            
-            response = self.fetch_with_retry(page_url)
-            if not response:
-                break
-                
-            soup = BeautifulSoup(response.content, 'html.parser')
-            
-            # Enhanced container detection
-            movie_containers = []
-            
-            # Method 1: Look for poster-viewingdata containers
-            poster_data_containers = soup.find_all('p', class_='poster-viewingdata')
-            for data_container in poster_data_containers:
-                parent = data_container.parent
-                if parent:
-                    movie_containers.append(parent)
-            
-            # Method 2: Fallback to grid items
-            if not movie_containers:
-                movie_containers = soup.find_all('li', class_='griditem')
-            
-            if not movie_containers:
-                break
-            
-            page_films = []
-            for container in movie_containers:
-                movie_data = self.extract_enhanced_movie_data(container)
-                if movie_data and movie_data['movie_id'] not in movies_seen:
-                    page_films.append(movie_data)
-                    movies_seen.add(movie_data['movie_id'])
-            
-            if page_films:
-                all_films.extend(page_films)
-                print(f"  Page {page_num}: {len(page_films)} films (Total: {len(all_films)})")
-            else:
-                print(f"  Page {page_num}: No films found")
-                break
-            
-            # Check for next page
-            next_link = soup.find('a', class_='next')
-            if not next_link:
-                break
-                
-            page_num += 1
-            
-            # Aggressive rate limiting
-            if page_num <= 5:
-                time.sleep(2)
-            elif page_num <= 10:
-                time.sleep(5)
-            else:
-                time.sleep(8)
-        
-        self.films_data = all_films
-        print(f"✓ Found {len(all_films)} total films")
-        return all_films
-    
-    def save_to_csv(self, movies: List[Dict]) -> None:
-        """Save movies data to CSV file with ALL available fields."""
-        try:
-            with open(self.output_file, 'w', newline='', encoding='utf-8') as csvfile:
-                # ALL possible fieldnames - always include everything
-                fieldnames = [
-                    'Title', 'Year', 'Rating', 'Film_ID', 'Slug', 'Poster_URL', 'Film_Link', 'Has_Review',
-                    'Full_Display_Name', 'Item_Name', 'Target_Link', 'Details_Endpoint', 
-                    'Cache_Busting_Key', 'Component_Class', 'Empty_Poster_Src', 'Postered_Identifier',
-                    'Image_Height', 'Image_Width', 'Has_Default_Poster', 'Is_Linked', 'Is_Likeable',
-                    'Is_Rateable', 'Is_Watchable', 'Request_Poster_Metadata', 'Show_Menu', 
-                    'Item_UID', 'Rating_Class'
-                ]
-                    
-                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-                
-                writer.writeheader()
-                for movie in movies:
-                    writer.writerow({
-                        'Title': movie['title'],
-                        'Year': movie['year'] if movie['year'] else '',
-                        'Rating': movie['rating'] if movie['rating'] else '',
-                        'Film_ID': movie.get('film_id', ''),
-                        'Slug': movie.get('slug', ''),
-                        'Poster_URL': movie.get('poster_url', ''),
-                        'Film_Link': movie.get('film_link', ''),
-                        'Has_Review': 'Yes' if movie.get('has_review') else 'No',
-                        'Full_Display_Name': movie.get('full_display_name', ''),
-                        'Item_Name': movie.get('item_name', ''),
-                        'Target_Link': movie.get('target_link', ''),
-                        'Details_Endpoint': movie.get('details_endpoint', ''),
-                        'Cache_Busting_Key': movie.get('cache_busting_key', ''),
-                        'Component_Class': movie.get('component_class', ''),
-                        'Empty_Poster_Src': movie.get('empty_poster_src', ''),
-                        'Postered_Identifier': movie.get('postered_identifier', ''),
-                        'Image_Height': movie.get('image_height', ''),
-                        'Image_Width': movie.get('image_width', ''),
-                        'Has_Default_Poster': 'Yes' if movie.get('has_default_poster') else 'No',
-                        'Is_Linked': 'Yes' if movie.get('is_linked') else 'No',
-                        'Is_Likeable': 'Yes' if movie.get('is_likeable') else 'No',
-                        'Is_Rateable': 'Yes' if movie.get('is_rateable') else 'No',
-                        'Is_Watchable': 'Yes' if movie.get('is_watchable') else 'No',
-                        'Request_Poster_Metadata': 'Yes' if movie.get('request_poster_metadata') else 'No',
-                        'Show_Menu': 'Yes' if movie.get('show_menu') else 'No',
-                        'Item_UID': movie.get('item_uid', ''),
-                        'Rating_Class': movie.get('rating_class', '')
-                    })
-                    
-            print(f"Successfully saved {len(movies)} movies to {self.output_file}")
-            
-        except Exception as e:
-            print(f"Error saving to CSV: {e}")
-    
-    def run(self) -> None:
-        """Main execution method."""
-        movies = self.scrape_all_films()
-        
-        if movies:
-            self.save_to_csv(movies)
-        else:
-            print("No movies were scraped. Please check the username and try again.")
 
 
 def validate_username(username: str) -> bool:
