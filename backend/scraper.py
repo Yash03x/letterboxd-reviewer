@@ -216,6 +216,124 @@ class EnhancedLetterboxdScraper:
         
         return self.profile_info
     
+    def scrape_all_films(self) -> List[Dict]:
+        """Scrape all films from the user's films page."""
+        print(f"🎬 Scraping all films for {self.username}...")
+        
+        films = []
+        page_num = 1
+        
+        while True:
+            if page_num == 1:
+                page_url = self.urls['films']
+            else:
+                page_url = f"{self.urls['films']}page/{page_num}/"
+            
+            response = self.fetch_with_retry(page_url)
+            if not response:
+                break
+                
+            soup = BeautifulSoup(response.content, 'html.parser')
+            
+            # Find film poster containers (using correct selector)
+            # Films are in li.griditem elements, each containing a div.poster.film-poster
+            film_elements = soup.find_all('li', class_='griditem')
+            
+            if not film_elements:
+                break
+            
+            for film_elem in film_elements:
+                try:
+                    # Find the poster div within the griditem
+                    poster_div = film_elem.find('div', class_='poster film-poster')
+                    if not poster_div:
+                        continue
+                    
+                    # Get film info from poster
+                    img = poster_div.find('img')
+                    if not img:
+                        continue
+                    
+                    # Get the link from the react-component div
+                    react_component = film_elem.find('div', class_='react-component')
+                    if not react_component:
+                        continue
+                    
+                    # Extract film data from data attributes
+                    film_link = react_component.get('data-item-link', '')
+                    if not film_link:
+                        continue
+                    
+                    title = img.get('alt', '').strip()
+                    href = film_link  # film_link is already the href string
+                    poster_url = img.get('src', '')
+                    
+                    # Extract year from data-item-name attribute (e.g., "Weapons (2025)")
+                    item_name = react_component.get('data-item-name', '')
+                    year_match = re.search(r'\((\d{4})\)', item_name)
+                    year = int(year_match.group(1)) if year_match else None
+                    
+                    # Extract film ID and slug from URL
+                    film_id = ""
+                    slug = ""
+                    url_parts = href.strip('/').split('/')
+                    if len(url_parts) >= 2:
+                        slug = url_parts[-1]
+                        film_id = url_parts[-2] if url_parts[-2].isdigit() else ""
+                    
+                    # Check for rating and review status in poster-viewingdata
+                    rating = None
+                    is_liked = False
+                    has_review = False
+                    
+                    viewing_data = film_elem.find('p', class_='poster-viewingdata')
+                    if viewing_data:
+                        # Check for rating
+                        rating_elem = viewing_data.find('span', class_='rating')
+                        if rating_elem:
+                            stars_text = rating_elem.get_text()
+                            rating = self.convert_stars_to_rating(stars_text)
+                        
+                        # Check for like status
+                        like_elem = viewing_data.find('span', class_='like')
+                        is_liked = like_elem is not None
+                        
+                        # Check for review status
+                        review_elem = viewing_data.find('a', class_='review-micro')
+                        has_review = review_elem is not None
+                    
+                    film_data = {
+                        'title': title,
+                        'year': year,
+                        'rating': rating,
+                        'film_id': film_id,
+                        'slug': slug,
+                        'poster_url': poster_url,
+                        'film_url': href,
+                        'is_liked': is_liked,
+                        'has_review': has_review,
+                        'movie_id': film_id  # For compatibility
+                    }
+                    
+                    films.append(film_data)
+                    
+                except Exception as e:
+                    if self.debug:
+                        print(f"Error processing film: {e}")
+                    continue
+            
+            # Check for next page
+            next_link = soup.find('a', class_='next')
+            if not next_link:
+                break
+                
+            page_num += 1
+            time.sleep(1)  # Be respectful
+        
+        self.films_data = films
+        print(f"✓ Found {len(films)} films")
+        return films
+
     def scrape_diary_entries(self) -> List[Dict]:
         """Scrape complete diary entries with watch dates."""
         print(f"📅 Scraping diary entries for {self.username}...")
@@ -726,6 +844,7 @@ class EnhancedLetterboxdScraper:
         
         # Scrape all sections
         self.scrape_profile_info()
+        self.scrape_all_films()  # Add this line to scrape films
         self.scrape_diary_entries()
         self.scrape_reviews()
         self.scrape_watchlist()

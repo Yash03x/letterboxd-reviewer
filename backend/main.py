@@ -89,6 +89,8 @@ def unified_data_loader(analyzer_profile, profile_id: int, db: Session):
     # Priority 1: Comprehensive films dataset (most complete)
     if hasattr(analyzer_profile, 'all_films') and not analyzer_profile.all_films.empty:
         print(f"Processing comprehensive films dataset: {len(analyzer_profile.all_films)} films")
+        print(f"Comprehensive films columns: {list(analyzer_profile.all_films.columns)}")
+        print(f"First few rows: {analyzer_profile.all_films.head(3).to_dict('records')}")
         for _, row in analyzer_profile.all_films.iterrows():
             movie_title = str(row.get('Name', row.get('Title', '')))
             movie_year = row.get('Year', None)
@@ -96,7 +98,7 @@ def unified_data_loader(analyzer_profile, profile_id: int, db: Session):
                 movie_year = int(movie_year)
             else:
                 movie_year = None
-                
+            
             movie_key = (movie_title, movie_year)
             
             # Parse watched_date
@@ -177,10 +179,9 @@ def unified_data_loader(analyzer_profile, profile_id: int, db: Session):
                 'is_liked': False  # Will be set by likes data below
             }
     
-    # Process likes data - mark existing movies as liked, add new ones
+    # Process likes data - only mark existing movies as liked (no new movies added)
     if hasattr(analyzer_profile, 'likes') and not analyzer_profile.likes.empty:
         print(f"Processing likes data: {len(analyzer_profile.likes)} films")
-        likes_added = 0
         likes_marked = 0
         
         for _, row in analyzer_profile.likes.iterrows():
@@ -194,23 +195,11 @@ def unified_data_loader(analyzer_profile, profile_id: int, db: Session):
             movie_key = (movie_title, movie_year)
             
             if movie_key in all_movies:
-                # Movie already exists, just mark as liked
+                # Movie exists, mark as liked
                 all_movies[movie_key]['is_liked'] = True
                 likes_marked += 1
-            else:
-                # New movie from likes only
-                all_movies[movie_key] = {
-                    'profile_id': profile_id,
-                    'movie_title': movie_title,
-                    'movie_year': movie_year,
-                    'rating': None,  # Likes don't have ratings
-                    'watched_date': None,
-                    'is_rewatch': False,
-                    'is_liked': True
-                }
-                likes_added += 1
         
-        print(f"Likes processing: {likes_marked} existing movies marked as liked, {likes_added} new movies added")
+        print(f"Likes processing: {likes_marked} existing movies marked as liked")
     
     # Bulk insert all ratings with error handling for duplicates
     if all_movies:
@@ -243,8 +232,7 @@ def unified_data_loader(analyzer_profile, profile_id: int, db: Session):
                 'review_text': str(row.get('Review', '')),
                 'rating': float(row.get('Rating')) if row.get('Rating') else None,
                 'published_date': parse_date_for_db(row.get('Date', row.get('Watched Date', None))),
-                'is_spoiler': bool(row.get('Contains Spoilers', False)),
-                'is_rewatch': bool(row.get('Rewatch', False))
+                'contains_spoilers': bool(row.get('Contains Spoilers', False))
             })
         
         if reviews_data:
