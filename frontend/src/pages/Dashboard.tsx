@@ -95,11 +95,7 @@ const Dashboard: React.FC = () => {
   const totalProfiles = analytics?.system_stats?.total_profiles ?? 0;
   const totalMovies = analytics?.system_stats?.total_movies_tracked ?? 0;
   const totalReviews = analytics?.system_stats?.total_reviews ?? 0;
-  
-  // Calculate average rating from profiles data, as it's a client-side aggregation of profile-specific data
-  const avgRating = profilesArray.length 
-    ? profilesArray.reduce((sum, profile) => sum + (profile.avg_rating || 0), 0) / profilesArray.length 
-    : 0;
+  const avgRating = analytics?.system_stats?.global_avg_rating ?? 0;
 
   // Calculate completion rate based on profile statuses
   const activeProfiles = profilesArray.filter(p => p.scraping_status === 'completed').length;
@@ -110,7 +106,7 @@ const Dashboard: React.FC = () => {
   const aggregateActivityData = analytics?.activity_data ?? [];
 
   if (analyticsLoading) {
-    return <LoadingSpinner text="Loading dashboard analytics..." />;
+    return <LoadingSpinner message="Loading dashboard analytics..." />;
   }
 
   return (
@@ -218,7 +214,10 @@ const Dashboard: React.FC = () => {
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.6 }}
       >
-        <RatingDistributionChart data={aggregateRatingDistribution} />
+        <RatingDistributionChart 
+          data={aggregateRatingDistribution} 
+          globalAverage={avgRating}
+        />
         <ActivityChart data={aggregateActivityData} />
       </motion.div>
 

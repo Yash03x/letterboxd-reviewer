@@ -70,6 +70,189 @@ async def startup_event():
 # Keep analyzer for processing
 analyzer = UnifiedLetterboxdAnalyzer()
 
+def unified_data_loader(analyzer_profile, profile_id: int, db: Session):
+    """
+    Unified function to load all profile data with proper deduplication.
+    This prevents duplicates regardless of data source (upload vs scrape).
+    """
+    rating_repo = RatingRepository(db)
+    review_repo = ReviewRepository(db)
+    
+    # Clear existing data first to ensure clean slate
+    print(f"Clearing existing data for profile {profile_id}")
+    rating_repo.delete_ratings_by_profile(profile_id)
+    review_repo.delete_reviews_by_profile(profile_id)
+    
+    # Collect all unique movies from all sources to prevent duplicates
+    all_movies = {}  # movie_key -> movie_data mapping
+    
+    # Priority 1: Comprehensive films dataset (most complete)
+    if hasattr(analyzer_profile, 'all_films') and not analyzer_profile.all_films.empty:
+        print(f"Processing comprehensive films dataset: {len(analyzer_profile.all_films)} films")
+        for _, row in analyzer_profile.all_films.iterrows():
+            movie_title = str(row.get('Name', row.get('Title', '')))
+            movie_year = row.get('Year', None)
+            if movie_year and str(movie_year).isdigit():
+                movie_year = int(movie_year)
+            else:
+                movie_year = None
+                
+            movie_key = (movie_title, movie_year)
+            
+            # Parse watched_date
+            watched_date = None
+            watched_date_raw = row.get('Watched Date', row.get('Date', None))
+            if watched_date_raw:
+                try:
+                    parsed_date = pd.to_datetime(watched_date_raw, errors='coerce')
+                    if not pd.isna(parsed_date):
+                        watched_date = parsed_date.date()
+                except:
+                    watched_date = None
+                    
+            all_movies[movie_key] = {
+                'profile_id': profile_id,
+                'movie_title': movie_title,
+                'movie_year': movie_year,
+                'rating': float(row.get('Rating')) if row.get('Rating') else None,
+                'watched_date': watched_date,
+                'is_rewatch': bool(row.get('Rewatch', row.get('Is_Rewatch', False))),
+                'is_liked': False  # Will be set by likes data below
+            }
+    
+    # Merge diary data for watched dates (if available)
+    if hasattr(analyzer_profile, 'diary') and not analyzer_profile.diary.empty:
+        print(f"Merging diary data for watched dates: {len(analyzer_profile.diary)} entries")
+        diary_dates_added = 0
+        for _, row in analyzer_profile.diary.iterrows():
+            movie_title = str(row.get('Name', ''))
+            movie_year = row.get('Year', None)
+            if movie_year and str(movie_year).isdigit():
+                movie_year = int(movie_year)
+            else:
+                movie_year = None
+                
+            movie_key = (movie_title, movie_year)
+            
+            # Parse diary watched date
+            watched_date = None
+            watched_date_raw = row.get('Watched Date', None)
+            if watched_date_raw and str(watched_date_raw).strip():
+                try:
+                    # Handle formats like "Aug 2025 28" 
+                    parsed_date = pd.to_datetime(watched_date_raw, errors='coerce')
+                    if not pd.isna(parsed_date):
+                        watched_date = parsed_date.date()
+                except:
+                    watched_date = None
+            
+            # If movie exists in all_movies and we have a valid date, update it
+            if movie_key in all_movies and watched_date:
+                if not all_movies[movie_key]['watched_date']:  # Only update if no date exists
+                    all_movies[movie_key]['watched_date'] = watched_date
+                    diary_dates_added += 1
+        
+        print(f"Added {diary_dates_added} watched dates from diary")
+    
+    # Priority 2: Ratings dataset (fallback if no comprehensive data)
+    elif hasattr(analyzer_profile, 'ratings') and not analyzer_profile.ratings.empty:
+        print(f"Processing ratings dataset: {len(analyzer_profile.ratings)} films")
+        for _, row in analyzer_profile.ratings.iterrows():
+            movie_title = str(row.get('Name', ''))
+            movie_year = row.get('Year', None)
+            if movie_year and str(movie_year).isdigit():
+                movie_year = int(movie_year)
+            else:
+                movie_year = None
+                
+            movie_key = (movie_title, movie_year)
+            
+            all_movies[movie_key] = {
+                'profile_id': profile_id,
+                'movie_title': movie_title,
+                'movie_year': movie_year,
+                'rating': float(row.get('Rating')) if row.get('Rating') else None,
+                'watched_date': parse_date_for_db(row.get('Watched Date', None)),
+                'is_rewatch': bool(row.get('Rewatch', False)),
+                'is_liked': False  # Will be set by likes data below
+            }
+    
+    # Process likes data - mark existing movies as liked, add new ones
+    if hasattr(analyzer_profile, 'likes') and not analyzer_profile.likes.empty:
+        print(f"Processing likes data: {len(analyzer_profile.likes)} films")
+        likes_added = 0
+        likes_marked = 0
+        
+        for _, row in analyzer_profile.likes.iterrows():
+            movie_title = str(row.get('Name', row.get('Title', '')))
+            movie_year = row.get('Year', None)
+            if movie_year and str(movie_year).isdigit():
+                movie_year = int(movie_year)
+            else:
+                movie_year = None
+                
+            movie_key = (movie_title, movie_year)
+            
+            if movie_key in all_movies:
+                # Movie already exists, just mark as liked
+                all_movies[movie_key]['is_liked'] = True
+                likes_marked += 1
+            else:
+                # New movie from likes only
+                all_movies[movie_key] = {
+                    'profile_id': profile_id,
+                    'movie_title': movie_title,
+                    'movie_year': movie_year,
+                    'rating': None,  # Likes don't have ratings
+                    'watched_date': None,
+                    'is_rewatch': False,
+                    'is_liked': True
+                }
+                likes_added += 1
+        
+        print(f"Likes processing: {likes_marked} existing movies marked as liked, {likes_added} new movies added")
+    
+    # Bulk insert all ratings with error handling for duplicates
+    if all_movies:
+        ratings_data = list(all_movies.values())
+        try:
+            rating_repo.bulk_create_ratings(ratings_data)
+            print(f"Inserted {len(ratings_data)} unique movies (no duplicates)")
+        except Exception as e:
+            # If bulk insert fails due to constraints, try individual inserts
+            print(f"Bulk insert failed ({str(e)}), trying individual inserts...")
+            inserted_count = 0
+            for rating_data in ratings_data:
+                try:
+                    rating_repo.create_rating(**rating_data)
+                    inserted_count += 1
+                except Exception:
+                    # Skip duplicates silently
+                    pass
+            print(f"Inserted {inserted_count} out of {len(ratings_data)} movies (skipped duplicates)")
+    
+    # Process reviews data
+    if hasattr(analyzer_profile, 'reviews') and not analyzer_profile.reviews.empty:
+        print(f"Processing reviews data: {len(analyzer_profile.reviews)} reviews")
+        reviews_data = []
+        for _, row in analyzer_profile.reviews.iterrows():
+            reviews_data.append({
+                'profile_id': profile_id,
+                'movie_title': str(row.get('Name', row.get('Title', ''))),
+                'movie_year': int(row.get('Year')) if row.get('Year') and str(row.get('Year')).isdigit() else None,
+                'review_text': str(row.get('Review', '')),
+                'rating': float(row.get('Rating')) if row.get('Rating') else None,
+                'published_date': parse_date_for_db(row.get('Date', row.get('Watched Date', None))),
+                'is_spoiler': bool(row.get('Contains Spoilers', False)),
+                'is_rewatch': bool(row.get('Rewatch', False))
+            })
+        
+        if reviews_data:
+            review_repo.bulk_create_reviews(reviews_data)
+            print(f"Inserted {len(reviews_data)} reviews")
+    
+    return len(all_movies)
+
 def parse_date_for_db(date_value):
     """Parse date string/object to Python date object for database storage"""
     if not date_value:
@@ -327,33 +510,9 @@ async def upload_files(files: List[UploadFile] = File(...), db: Session = Depend
                         scraping_status="completed"
                     )
                 
-                # Store ratings data
-                if not analyzer_profile.ratings.empty:
-                    ratings_data = []
-                    for _, row in analyzer_profile.ratings.iterrows():
-                        ratings_data.append({
-                            'profile_id': profile.id,
-                            'movie_title': row.get('Name', ''),
-                            'movie_year': row.get('Year', None),
-                            'rating': row.get('Rating', None),
-                            'watched_date': parse_date_for_db(row.get('Watched Date', None)),
-                            'is_rewatch': row.get('Rewatch', False)
-                        })
-                    rating_repo.bulk_create_ratings(ratings_data)
-                
-                # Store reviews data
-                if not analyzer_profile.reviews.empty:
-                    reviews_data = []
-                    for _, row in analyzer_profile.reviews.iterrows():
-                        reviews_data.append({
-                            'profile_id': profile.id,
-                            'movie_title': row.get('Name', ''),
-                            'movie_year': row.get('Year', None),
-                            'rating': row.get('Rating', None),
-                            'review_text': row.get('Review', ''),
-                            'published_date': parse_date_for_db(row.get('Watched Date', None)),
-                        })
-                    review_repo.bulk_create_reviews(reviews_data)
+                # Use unified data loader to prevent duplicates
+                movies_loaded = unified_data_loader(analyzer_profile, profile.id, db)
+                print(f"Loaded {movies_loaded} movies for {username} via upload")
                 
                 loaded_profiles.append(username)
                 
@@ -459,112 +618,9 @@ async def run_scraping_task(job_id: int, username: str, db: Session):
                 scraping_status="completed"
             )
             
-            # Store ratings and reviews data (clear old data first)
-            rating_repo = RatingRepository(db)
-            review_repo = ReviewRepository(db)
-            
-            # Clear existing data for this profile
-            rating_repo.delete_ratings_by_profile(profile.id)
-            review_repo.delete_reviews_by_profile(profile.id)
-            
-            # Store ratings data - prioritize all_films if available, fallback to ratings
-            primary_dataset = None
-            if hasattr(analyzer_profile, 'all_films') and not analyzer_profile.all_films.empty:
-                primary_dataset = analyzer_profile.all_films
-                print(f"Using comprehensive all_films dataset: {len(primary_dataset)} films")
-            elif hasattr(analyzer_profile, 'ratings') and not analyzer_profile.ratings.empty:
-                primary_dataset = analyzer_profile.ratings
-                print(f"Using ratings dataset: {len(primary_dataset)} films")
-                
-            if primary_dataset is not None and not primary_dataset.empty:
-                ratings_data = []
-                for _, row in primary_dataset.iterrows():
-                    # Handle different column names from different sources
-                    movie_title = str(row.get('Name', row.get('Title', '')))
-                    movie_year = row.get('Year', None)
-                    if movie_year and str(movie_year).isdigit():
-                        movie_year = int(movie_year)
-                    else:
-                        movie_year = None
-                        
-                    rating = row.get('Rating', None)
-                    if rating:
-                        rating = float(rating)
-                    else:
-                        rating = None
-                        
-                    # Parse watched_date properly
-                    watched_date_raw = row.get('Watched Date', row.get('Date', None))
-                    watched_date = None
-                    if watched_date_raw:
-                        try:
-                            # Convert to pandas datetime then to Python date
-                            parsed_date = pd.to_datetime(watched_date_raw, errors='coerce')
-                            if not pd.isna(parsed_date):
-                                watched_date = parsed_date.date()
-                        except Exception as e:
-                            print(f"Warning: Could not parse date '{watched_date_raw}': {e}")
-                            watched_date = None
-                    
-                    is_rewatch = bool(row.get('Rewatch', row.get('Is_Rewatch', False)))
-                    is_liked = bool(row.get('Is_Liked', False))
-                    
-                    rating_data = {
-                        'profile_id': profile.id,
-                        'movie_title': movie_title,
-                        'movie_year': movie_year,
-                        'rating': rating,
-                        'watched_date': watched_date,
-                        'is_rewatch': is_rewatch,
-                        'is_liked': is_liked
-                    }
-                    ratings_data.append(rating_data)
-                
-                if ratings_data:
-                    rating_repo.bulk_create_ratings(ratings_data)
-                    
-            # Also store likes data if available (separate from main dataset)
-            if hasattr(analyzer_profile, 'likes') and not analyzer_profile.likes.empty:
-                likes_data = []
-                for _, row in analyzer_profile.likes.iterrows():
-                    movie_title = str(row.get('Name', row.get('Title', '')))
-                    movie_year = row.get('Year', None)
-                    if movie_year and str(movie_year).isdigit():
-                        movie_year = int(movie_year)
-                    else:
-                        movie_year = None
-                        
-                    likes_data.append({
-                        'profile_id': profile.id,
-                        'movie_title': movie_title,
-                        'movie_year': movie_year,
-                        'rating': None,  # Likes don't have ratings
-                        'watched_date': None,  # Likes typically don't have watch dates
-                        'is_rewatch': False,
-                        'is_liked': True
-                    })
-                
-                if likes_data:
-                    print(f"Storing additional {len(likes_data)} liked films")
-                    rating_repo.bulk_create_ratings(likes_data)
-            
-            # Store reviews data if available
-            if hasattr(analyzer_profile, 'reviews') and not analyzer_profile.reviews.empty:
-                reviews_data = []
-                for _, row in analyzer_profile.reviews.iterrows():
-                    review_data = {
-                        'profile_id': profile.id,
-                        'movie_title': str(row.get('Name', '')),
-                        'movie_year': int(row.get('Year', 0)) if row.get('Year') and str(row.get('Year')).isdigit() else None,
-                        'rating': float(row.get('Rating', 0)) if row.get('Rating') else None,
-                        'review_text': str(row.get('Review', '')),
-                        'published_date': row.get('Watched Date', None),
-                        'likes_count': int(row.get('Likes', 0)) if row.get('Likes') else None
-                    }
-                    reviews_data.append(review_data)
-                
-                if reviews_data:
-                    review_repo.bulk_create_reviews(reviews_data)
+            # Use unified data loader to prevent duplicates
+            movies_loaded = unified_data_loader(analyzer_profile, profile.id, db)
+            print(f"Loaded {movies_loaded} movies for {username} via scraping")
             
             # Copy data to permanent location
             permanent_dir = os.path.join(SCRAPED_DATA_DIR, username)

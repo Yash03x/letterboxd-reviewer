@@ -1,102 +1,133 @@
 import React from 'react';
 import { motion } from 'framer-motion';
-import { Doughnut } from 'react-chartjs-2';
+import { Bar } from 'react-chartjs-2';
 import {
   Chart as ChartJS,
-  ArcElement,
+  CategoryScale,
+  LinearScale,
+  BarElement,
   Tooltip,
   Legend,
   ChartOptions,
 } from 'chart.js';
 
-ChartJS.register(ArcElement, Tooltip, Legend);
+ChartJS.register(CategoryScale, LinearScale, BarElement, Tooltip, Legend);
 
 interface RatingDistributionChartProps {
   data: Record<string, number>;
   title?: string;
+  globalAverage?: number;
 }
 
 const RatingDistributionChart: React.FC<RatingDistributionChartProps> = ({ 
   data, 
-  title = "Rating Distribution" 
+  title = "Rating Distribution",
+  globalAverage 
 }) => {
   const ratings = Object.keys(data).sort((a, b) => parseFloat(b) - parseFloat(a));
   const values = ratings.map(rating => data[rating]);
-  
-  // Cinema-inspired color palette
-  const colors = [
-    '#f57c00', // cinema-400
-    '#e65100', // cinema-500
-    '#c44100', // cinema-600
-    '#992e00', // cinema-700
-    '#7a1f00', // cinema-800
-    '#5d1600', // cinema-900
-    '#fde8d3', // cinema-100
-    '#fbcd9a', // cinema-200
-  ];
+
+  // Sort ratings in descending order (5.0 to 0.5)
+  const sortedRatings = ratings.map((rating, index) => ({
+    rating,
+    value: values[index]
+  })).sort((a, b) => parseFloat(b.rating) - parseFloat(a.rating));
 
   const chartData = {
-    labels: ratings.map(r => `${r} ⭐`),
+    labels: sortedRatings.map(item => `${item.rating} ⭐`),
     datasets: [
       {
-        data: values,
-        backgroundColor: colors.slice(0, ratings.length),
-        borderColor: colors.slice(0, ratings.length).map(color => color + '40'),
-        borderWidth: 2,
-        hoverBorderWidth: 3,
-        hoverBorderColor: '#ffffff80',
+        label: 'Number of Ratings',
+        data: sortedRatings.map(item => item.value),
+        backgroundColor: [
+          '#f59e0b', // 5.0 stars - amber
+          '#f97316', // 4.5 stars - orange  
+          '#ea580c', // 4.0 stars - orange-600
+          '#dc2626', // 3.5 stars - red-600
+          '#b91c1c', // 3.0 stars - red-700
+          '#991b1b', // 2.5 stars - red-800
+          '#7f1d1d', // 2.0 stars - red-900
+          '#451a03', // 1.5 stars - orange-950
+          '#292524', // 1.0 stars - stone-800
+          '#1c1917', // 0.5 stars - stone-900
+        ].slice(0, sortedRatings.length),
+        borderColor: [
+          '#d97706', '#ea580c', '#c2410c', '#b91c1c', '#991b1b', 
+          '#7f1d1d', '#65a30d', '#365314', '#1f2937', '#111827'
+        ].slice(0, sortedRatings.length),
+        borderWidth: 1,
+        borderRadius: 6,
+        borderSkipped: false,
       },
     ],
   };
 
-  const options: ChartOptions<'doughnut'> = {
+  const options: ChartOptions<'bar'> = {
     responsive: true,
     maintainAspectRatio: false,
+    indexAxis: 'y' as const, // Horizontal bars
     plugins: {
       legend: {
-        position: 'right' as const,
-        labels: {
-          color: '#f8fafc',
-          font: {
-            family: 'Inter',
-            size: 12,
-          },
-          padding: 15,
-          usePointStyle: true,
-          pointStyle: 'circle',
-        },
+        display: false, // Hide legend for cleaner look
       },
       tooltip: {
-        backgroundColor: 'rgba(15, 23, 42, 0.9)',
+        backgroundColor: 'rgba(15, 23, 42, 0.95)',
         titleColor: '#f8fafc',
         bodyColor: '#f8fafc',
-        borderColor: '#f57c00',
+        borderColor: '#f59e0b',
         borderWidth: 1,
         cornerRadius: 8,
         padding: 12,
-        displayColors: true,
+        displayColors: false,
         callbacks: {
+          title: (context) => `${context[0].label}`,
           label: (context) => {
-            const total = context.dataset.data.reduce((sum, val) => sum + (val as number), 0);
-            const percentage = ((context.raw as number) / total * 100).toFixed(1);
-            return `${context.label}: ${context.raw} movies (${percentage}%)`;
+            const total = context.dataset.data.reduce((sum: number, val) => sum + (val as number), 0);
+            const percentage = total > 0 ? ((context.raw as number) / total * 100).toFixed(1) : '0.0';
+            return `${context.raw} ratings (${percentage}%)`;
           },
         },
       },
     },
-    cutout: '60%',
+    scales: {
+      x: {
+        beginAtZero: true,
+        grid: {
+          color: 'rgba(248, 250, 252, 0.1)',
+        },
+        ticks: {
+          color: '#94a3b8',
+          font: {
+            size: 12,
+          },
+          callback: function(value) {
+            // Format large numbers with k suffix
+            const num = value as number;
+            return num >= 1000 ? (num/1000).toFixed(1) + 'k' : num.toString();
+          },
+        },
+      },
+      y: {
+        grid: {
+          display: false,
+        },
+        ticks: {
+          color: '#f8fafc',
+          font: {
+            size: 13,
+            weight: 'bold',
+          },
+        },
+      },
+    },
     animation: {
-      animateRotate: true,
-      animateScale: true,
-      duration: 2000,
-      easing: 'easeInOutQuart',
+      duration: 1500,
+      easing: 'easeOutQuart',
     },
   };
 
-  const totalMovies = values.reduce((sum, val) => sum + val, 0);
-  const averageRating = ratings.length > 0 
-    ? ratings.reduce((sum, rating, index) => sum + parseFloat(rating) * values[index], 0) / totalMovies
-    : 0;
+  const totalRatings = values.reduce((sum, val) => sum + val, 0);
+  const averageRating = globalAverage ?? 0;
 
   return (
     <motion.div 
@@ -105,40 +136,44 @@ const RatingDistributionChart: React.FC<RatingDistributionChartProps> = ({
       animate={{ opacity: 1, scale: 1 }}
       transition={{ duration: 0.6, delay: 0.2 }}
     >
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-4">
         <div>
           <h3 className="text-lg font-semibold text-white">{title}</h3>
-          <p className="text-white/60 text-sm">Distribution across ratings</p>
+          <p className="text-white/60 text-sm">How users rate movies (star ratings)</p>
         </div>
         
-        <motion.div 
-          className="text-center"
-          initial={{ opacity: 0, y: -10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.4 }}
-        >
-          <div className="text-2xl font-bold text-cinema-400">{averageRating.toFixed(1)}</div>
-          <div className="text-xs text-white/60">Avg Rating</div>
-        </motion.div>
+        <div className="flex items-center space-x-6">
+          <motion.div 
+            className="text-center"
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.4 }}
+          >
+            <div className="text-xl font-bold text-cinema-400">{averageRating.toFixed(1)}</div>
+            <div className="text-xs text-white/60">Avg Rating</div>
+          </motion.div>
+          
+          <motion.div 
+            className="text-center"
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.5 }}
+          >
+            <div className="text-xl font-bold text-white">{totalRatings.toLocaleString()}</div>
+            <div className="text-xs text-white/60">Total Ratings</div>
+          </motion.div>
+        </div>
       </div>
       
-      <div className="relative h-56">
-        {totalMovies > 0 ? (
+      <div className="relative h-60">
+        {totalRatings > 0 ? (
           <motion.div 
             className="h-full"
-            initial={{ opacity: 0, rotate: -10 }}
-            animate={{ opacity: 1, rotate: 0 }}
+            initial={{ opacity: 0, x: -20 }}
+            animate={{ opacity: 1, x: 0 }}
             transition={{ duration: 1, delay: 0.3 }}
           >
-            <Doughnut data={chartData} options={options} />
-            
-            {/* Center text */}
-            <div className="absolute inset-0 flex items-center justify-center">
-              <div className="text-center">
-                <div className="text-2xl font-bold text-white">{totalMovies}</div>
-                <div className="text-xs text-white/60">Movies</div>
-              </div>
-            </div>
+            <Bar data={chartData} options={options} />
           </motion.div>
         ) : (
           <motion.div 

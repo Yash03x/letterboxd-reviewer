@@ -144,6 +144,7 @@ export interface SystemStats {
   total_movies_tracked: number;
   total_reviews: number;
   active_scraping_jobs: number;
+  global_avg_rating: number;
   last_updated: string;
 }
 

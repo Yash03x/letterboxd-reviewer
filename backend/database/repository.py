@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import desc, func, and_, or_
+from sqlalchemy import desc, func, and_, or_, String
 from .models import Profile, Rating, Review, MovieList, ScrapingJob
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
@@ -240,7 +240,18 @@ class AnalyticsRepository:
     def get_system_stats(self) -> Dict[str, Any]:
         """Get overall system statistics"""
         total_profiles = self.db.query(func.count(Profile.id)).scalar()
-        total_ratings = self.db.query(func.count(Rating.id)).scalar()
+        
+        # Count unique movies across all profiles (not sum of ratings)
+        # Use subquery to count distinct movie combinations
+        from sqlalchemy import distinct
+        unique_movies_subquery = self.db.query(
+            distinct(Rating.movie_title), 
+            distinct(Rating.movie_year)
+        ).subquery()
+        
+        # Simpler approach: just count distinct movie_title, movie_year pairs
+        total_unique_movies = self.db.query(Rating.movie_title, Rating.movie_year).distinct().count()
+        
         total_reviews = self.db.query(func.count(Review.id)).scalar()
         
         # Active scraping jobs
@@ -248,11 +259,17 @@ class AnalyticsRepository:
             ScrapingJob.status.in_(["queued", "in_progress"])
         ).scalar()
         
+        # Global average rating across all ratings
+        global_avg_rating = self.db.query(func.avg(Rating.rating)).filter(
+            Rating.rating.isnot(None)
+        ).scalar() or 0.0
+        
         return {
             "total_profiles": total_profiles,
-            "total_movies_tracked": total_ratings,
+            "total_movies_tracked": total_unique_movies,
             "total_reviews": total_reviews,
             "active_scraping_jobs": active_jobs,
+            "global_avg_rating": round(float(global_avg_rating), 2),
             "last_updated": datetime.utcnow().isoformat()
         }
     

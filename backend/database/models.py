@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, Text, Float, Boolean, ForeignKey, Date, JSON
+from sqlalchemy import Column, Integer, String, DateTime, Text, Float, Boolean, ForeignKey, Date, JSON, UniqueConstraint
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -78,6 +78,11 @@ class Rating(Base):
     
     # Relationships
     profile = relationship("Profile", back_populates="ratings")
+    
+    # Prevent duplicate ratings for same movie by same user
+    __table_args__ = (
+        UniqueConstraint('profile_id', 'movie_title', 'movie_year', name='unique_user_movie_rating'),
+    )
 
 class Review(Base):
     __tablename__ = "reviews"
