@@ -135,49 +135,30 @@ async def list_profiles(db: Session = Depends(get_db)):
     
     return {"profiles": profile_list}
 
-@app.get("/dashboard/analytics")
-async def get_dashboard_analytics(db: Session = Depends(get_db)):
-    """Get aggregated analytics for the dashboard"""
-    profile_repo = ProfileRepository(db)
+@app.get("/api/dashboard/analytics")
+async def get_consolidated_dashboard_analytics(db: Session = Depends(get_db)):
+    """Get consolidated system-wide analytics for the main dashboard."""
+    analytics_repo = AnalyticsRepository(db)
     rating_repo = RatingRepository(db)
+
+    # Get system stats from the dedicated repository method
+    system_stats = analytics_repo.get_system_stats()
     
-    profiles = profile_repo.get_all_profiles(active_only=True)
+    # Get top-rated movies
+    top_movies = analytics_repo.get_top_rated_movies(limit=10)
     
-    if not profiles:
-        return {
-            "unique_movies_count": 0,
-            "rating_distribution": {},
-            "activity_data": []
-        }
-    
-    
-    # Get all ratings across all profiles to calculate unique movies
-    all_movies = set()
-    all_ratings = []
-    
-    for profile in profiles:
-        profile_ratings = rating_repo.get_ratings_by_profile(profile.id)
-        for rating in profile_ratings:
-            # Create a unique identifier for each movie (title + year)
-            movie_key = f"{rating.movie_title}|{rating.movie_year or 'Unknown'}"
-            all_movies.add(movie_key)
-            if rating.rating is not None and rating.rating > 0:
-                all_ratings.append(rating.rating)
-    
-    # Calculate rating distribution
-    rating_distribution = {}
-    for rating in all_ratings:
-        # Convert to star rating (0.5, 1.0, 1.5, etc.)
-        star_rating = str(rating) if rating % 1 == 0 else f"{rating:.1f}"
-        rating_distribution[star_rating] = rating_distribution.get(star_rating, 0) + 1
-    
+    # Get global rating distribution
+    rating_distribution = rating_repo.get_global_rating_distribution()
+
     # Get monthly activity data
     activity_data = rating_repo.get_global_monthly_activity()
-    
+
     return {
-        "unique_movies_count": len(all_movies),
+        "system_stats": system_stats,
+        "top_rated_movies": top_movies,
         "rating_distribution": rating_distribution,
-        "activity_data": activity_data
+        "activity_data": activity_data,
+        "timestamp": datetime.utcnow().isoformat()
     }
 
 @app.get("/profiles/{username}/analysis")
@@ -327,7 +308,6 @@ async def upload_files(files: List[UploadFile] = File(...), db: Session = Depend
                 if existing_profile:
                     profile = profile_repo.update_profile(
                         existing_profile.id,
-                        total_movies=analyzer_profile.total_movies,
                         avg_rating=analyzer_profile.avg_rating,
                         total_reviews=analyzer_profile.total_reviews,
                         join_date=analyzer_profile.join_date,
@@ -337,7 +317,6 @@ async def upload_files(files: List[UploadFile] = File(...), db: Session = Depend
                 else:
                     profile = profile_repo.create_profile(
                         username=username,
-                        total_movies=analyzer_profile.total_movies,
                         avg_rating=analyzer_profile.avg_rating,
                         total_reviews=analyzer_profile.total_reviews,
                         join_date=analyzer_profile.join_date,
@@ -470,7 +449,6 @@ async def run_scraping_task(job_id: int, username: str, db: Session):
             # Update profile with new data
             profile_repo.update_profile(
                 profile.id,
-                total_movies=analyzer_profile.total_movies,
                 avg_rating=analyzer_profile.avg_rating,
                 total_reviews=analyzer_profile.total_reviews,
                 join_date=analyzer_profile.join_date,
@@ -646,19 +624,6 @@ async def clear_scraped_data(username: str, db: Session = Depends(get_db)):
     return await clear_profile_data(username, db)
 
 # Analytics and Dashboard Endpoints
-@app.get("/analytics/dashboard")
-async def get_dashboard_analytics(db: Session = Depends(get_db)):
-    """Get system-wide analytics for dashboard"""
-    analytics_repo = AnalyticsRepository(db)
-    
-    system_stats = analytics_repo.get_system_stats()
-    top_movies = analytics_repo.get_top_rated_movies(limit=10)
-    
-    return {
-        "system_stats": system_stats,
-        "top_rated_movies": top_movies,
-        "timestamp": datetime.utcnow().isoformat()
-    }
 
 @app.get("/profiles/suggestions/update")
 async def get_update_suggestions(db: Session = Depends(get_db)):
@@ -691,7 +656,6 @@ async def clear_profile_data(username: str, db: Session = Depends(get_db)):
         profile.id,
         scraping_status="pending",
         last_scraped_at=None,
-        total_movies=0,
         avg_rating=0.0,
         total_reviews=0
     )

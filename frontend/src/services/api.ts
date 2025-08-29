@@ -2,7 +2,7 @@ import axios from 'axios';
 
 // Create axios instance with base configuration
 const api = axios.create({
-  baseURL: 'http://localhost:8000',
+  baseURL: process.env.REACT_APP_API_BASE_URL || 'http://localhost:8000',
   timeout: 30000, // 30 seconds for long operations like scraping
   headers: {
     'Content-Type': 'application/json',
@@ -139,11 +139,40 @@ export const analysisApi = {
   },
 };
 
+export interface SystemStats {
+  total_profiles: number;
+  total_movies_tracked: number;
+  total_reviews: number;
+  active_scraping_jobs: number;
+  last_updated: string;
+}
+
+export interface TopMovie {
+  title: string;
+  year: number;
+  average_rating: number;
+  total_ratings: number;
+}
+
+export interface ActivityData {
+  month: string;
+  movies_watched: number;
+  average_rating: number | null;
+}
+
+export interface DashboardAnalytics {
+  system_stats: SystemStats;
+  top_rated_movies: TopMovie[];
+  rating_distribution: Record<string, number>;
+  activity_data: ActivityData[];
+  timestamp: string;
+}
+
 // Dashboard API endpoints
 export const dashboardApi = {
   // Get dashboard analytics
-  getAnalytics: async (): Promise<any> => {
-    const response = await api.get('/dashboard/analytics');
+  getAnalytics: async (): Promise<DashboardAnalytics> => {
+    const response = await api.get('/api/dashboard/analytics');
     return response.data;
   },
 };

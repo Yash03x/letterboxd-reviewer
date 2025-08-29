@@ -123,6 +123,17 @@ class RatingRepository:
             }
             for month, count, avg_rating in results
         ]
+
+    def get_global_rating_distribution(self) -> Dict[str, int]:
+        """Get rating distribution across all profiles"""
+        results = self.db.query(
+            Rating.rating,
+            func.count(Rating.id).label('count')
+        ).filter(
+            Rating.rating.isnot(None)
+        ).group_by(Rating.rating).all()
+
+        return {str(rating): count for rating, count in results}
     
     def get_global_monthly_activity(self) -> List[Dict]:
         """Get monthly activity data across all profiles"""
