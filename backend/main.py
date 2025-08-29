@@ -268,7 +268,10 @@ async def delete_profile(username: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Profile not found")
     
     # Clean up data directory
-    data_path = os.path.join(SCRAPED_DATA_DIR, username)
+    data_path = os.path.normpath(os.path.join(SCRAPED_DATA_DIR, username))
+    # Ensure the final path is within SCRAPED_DATA_DIR
+    if not data_path.startswith(os.path.abspath(SCRAPED_DATA_DIR) + os.sep):
+        raise HTTPException(status_code=400, detail="Invalid username/path")
     if os.path.exists(data_path):
         shutil.rmtree(data_path)
     
