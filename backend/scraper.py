@@ -273,13 +273,9 @@ class EnhancedLetterboxdScraper:
                     year_match = re.search(r'\((\d{4})\)', item_name)
                     year = int(year_match.group(1)) if year_match else None
                     
-                    # Extract film ID and slug from URL
-                    film_id = ""
-                    slug = ""
-                    url_parts = href.strip('/').split('/')
-                    if len(url_parts) >= 2:
-                        slug = url_parts[-1]
-                        film_id = url_parts[-2] if url_parts[-2].isdigit() else ""
+                    # Extract film ID and slug from data attributes
+                    film_id = react_component.get('data-film-id', '')
+                    slug = react_component.get('data-item-slug', '')
                     
                     # Check for rating and review status in poster-viewingdata
                     rating = None
@@ -340,6 +336,8 @@ class EnhancedLetterboxdScraper:
         
         diary_entries = []
         page_num = 1
+        current_month = None
+        current_year = None
         
         while True:
             if page_num == 1:
@@ -365,38 +363,47 @@ class EnhancedLetterboxdScraper:
             
             for row in diary_rows:
                 try:
-                    # Extract month and day
+                    # Extract month, year, and day from date cells
                     month_cell = row.find('td', class_='col-monthdate')
                     day_cell = row.find('td', class_='col-daydate')
                     
+                    # Check if month_cell has month/year info (not empty)
+                    month_link = month_cell.find('a', class_='month') if month_cell else None
+                    year_link = month_cell.find('a', class_='year') if month_cell else None
+                    day_link = day_cell.find('a', class_='daydate') if day_cell else None
+                    
+                    # Update current month/year if new month info is found
+                    if month_link and year_link:
+                        current_month = month_link.get_text().strip()
+                        current_year = year_link.get_text().strip()
+                    
+                    # Create watch date using current month/year and day
                     watch_date = ''
-                    if month_cell and day_cell:
-                        month_text = month_cell.get_text().strip()
-                        day_text = day_cell.get_text().strip()
-                        # Try to construct a date string
-                        if month_text and day_text:
-                            watch_date = f"{month_text} {day_text}"
+                    if current_month and current_year and day_link:
+                        day_text = day_link.get_text().strip()
+                        if day_text:
+                            watch_date = f"{current_month} {current_year} {day_text}"
                     
                     # Extract film info from production cell
                     production_cell = row.find('td', class_='col-production')
                     if not production_cell:
                         continue
                     
-                    # Find film link and title
-                    film_link = production_cell.find('a')
-                    if not film_link:
+                    # Find react-component for film data
+                    react_component = production_cell.find('div', class_='react-component')
+                    if not react_component:
                         continue
                     
-                    title = film_link.get_text().strip()
-                    href = film_link.get('href', '')
+                    # Extract title and year from data attributes
+                    item_name = react_component.get('data-item-name', '')
+                    title = item_name.split(' (')[0] if ' (' in item_name else ''
+                    href = react_component.get('data-item-link', '')
                     
-                    # Extract year from release year cell
-                    year_cell = row.find('td', class_='col-releaseyear')
+                    # Extract year from data-item-name attribute (e.g., "Together (2025)")
                     year = None
-                    if year_cell:
-                        year_text = year_cell.get_text().strip()
-                        if year_text.isdigit():
-                            year = int(year_text)
+                    if item_name:
+                        year_match = re.search(r'\((\d{4})\)', item_name)
+                        year = int(year_match.group(1)) if year_match else None
                     
                     # Extract rating
                     rating_cell = row.find('td', class_='col-rating')
@@ -484,16 +491,17 @@ class EnhancedLetterboxdScraper:
             
             for review_elem in review_elements:
                 try:
-                    # Film title and year
-                    film_link = review_elem.find('h2').find('a') if review_elem.find('h2') else None
-                    if not film_link:
+                    # Film title and year from react-component data
+                    react_component = review_elem.find('div', class_='react-component')
+                    if not react_component:
                         continue
                     
-                    title = film_link.get_text().strip()
-                    href = film_link.get('href', '')
+                    title = react_component.get('data-item-name', '').split(' (')[0]  # Remove year from title
+                    href = react_component.get('data-item-link', '')
                     
-                    # Extract year
-                    year_match = re.search(r'/(\d{4})/', href)
+                    # Extract year from data-item-name attribute (e.g., "Together (2025)")
+                    item_name = react_component.get('data-item-name', '')
+                    year_match = re.search(r'\((\d{4})\)', item_name)
                     year = int(year_match.group(1)) if year_match else None
                     
                     # Rating
@@ -512,18 +520,20 @@ class EnhancedLetterboxdScraper:
                             script.decompose()
                         review_text = review_text_elem.get_text().strip()
                     
-                    # Review date
-                    date_elem = review_elem.find('span', class_='date')
-                    review_date = date_elem.get_text().strip() if date_elem else ""
+                    # Review date from timestamp
+                    date_elem = review_elem.find('time', class_='timestamp')
+                    review_date = date_elem.get('datetime', '') if date_elem else ""
+                    if not review_date:
+                        # Fallback to text content
+                        date_elem = review_elem.find('span', class_='date')
+                        review_date = date_elem.get_text().strip() if date_elem else ""
                     
-                    # Check for likes
-                    likes_elem = review_elem.find('span', class_='like-link-target')
+                    # Check for likes from data-count attribute
+                    likes_elem = review_elem.find('p', class_='like-link-target')
                     review_likes = 0
                     if likes_elem:
-                        likes_text = likes_elem.get_text()
-                        likes_match = re.search(r'(\d+)', likes_text)
-                        if likes_match:
-                            review_likes = int(likes_match.group(1))
+                        likes_count = likes_elem.get('data-count', '0')
+                        review_likes = int(likes_count) if likes_count.isdigit() else 0
                     
                     review_data = {
                         'title': title,
@@ -594,9 +604,18 @@ class EnhancedLetterboxdScraper:
                     href = film_link.get('href', '')
                     poster_url = img.get('src', '')
                     
-                    # Extract year from URL
-                    year_match = re.search(r'/(\d{4})/', href)
-                    year = int(year_match.group(1)) if year_match else None
+                    # Extract year from data-item-name if available
+                    react_component = film_elem.find('div', class_='react-component')
+                    year = None
+                    if react_component:
+                        item_name = react_component.get('data-item-name', '')
+                        year_match = re.search(r'\((\d{4})\)', item_name)
+                        year = int(year_match.group(1)) if year_match else None
+                    
+                    # Fallback to URL extraction
+                    if year is None:
+                        year_match = re.search(r'/(\d{4})/', href)
+                        year = int(year_match.group(1)) if year_match else None
                     
                     watchlist_item = {
                         'title': title,

@@ -116,10 +116,13 @@ def unified_data_loader(analyzer_profile, profile_id: int, db: Session):
                 'profile_id': profile_id,
                 'movie_title': movie_title,
                 'movie_year': movie_year,
+                'letterboxd_id': str(row.get('Film_ID', '')) if row.get('Film_ID') else None,
                 'rating': float(row.get('Rating')) if row.get('Rating') else None,
                 'watched_date': watched_date,
-                'is_rewatch': bool(row.get('Rewatch', row.get('Is_Rewatch', False))),
-                'is_liked': False  # Will be set by likes data below
+                'is_rewatch': _parse_rewatch_status(row.get('Rewatch', row.get('Is_Rewatch', False))),
+                'is_liked': False,  # Will be set by likes data below
+                'film_slug': str(row.get('Slug', '')) if row.get('Slug') else None,
+                'poster_url': str(row.get('Poster_URL', '')) if row.get('Poster_URL') else None
             }
     
     # Merge diary data for watched dates (if available)
@@ -153,6 +156,11 @@ def unified_data_loader(analyzer_profile, profile_id: int, db: Session):
                 if not all_movies[movie_key]['watched_date']:  # Only update if no date exists
                     all_movies[movie_key]['watched_date'] = watched_date
                     diary_dates_added += 1
+                
+                # Also update rewatch status from diary
+                is_rewatch = _parse_rewatch_status(row.get('Is_Rewatch', False))
+                if is_rewatch:
+                    all_movies[movie_key]['is_rewatch'] = True
         
         print(f"Added {diary_dates_added} watched dates from diary")
     
@@ -173,10 +181,13 @@ def unified_data_loader(analyzer_profile, profile_id: int, db: Session):
                 'profile_id': profile_id,
                 'movie_title': movie_title,
                 'movie_year': movie_year,
+                'letterboxd_id': str(row.get('Film_ID', '')) if row.get('Film_ID') else None,
                 'rating': float(row.get('Rating')) if row.get('Rating') else None,
                 'watched_date': parse_date_for_db(row.get('Watched Date', None)),
-                'is_rewatch': bool(row.get('Rewatch', False)),
-                'is_liked': False  # Will be set by likes data below
+                'is_rewatch': _parse_rewatch_status(row.get('Rewatch', False)),
+                'is_liked': False,  # Will be set by likes data below
+                'film_slug': str(row.get('Slug', '')) if row.get('Slug') else None,
+                'poster_url': str(row.get('Poster_URL', '')) if row.get('Poster_URL') else None
             }
     
     # Process likes data - only mark existing movies as liked (no new movies added)
@@ -229,9 +240,12 @@ def unified_data_loader(analyzer_profile, profile_id: int, db: Session):
                 'profile_id': profile_id,
                 'movie_title': str(row.get('Name', row.get('Title', ''))),
                 'movie_year': int(row.get('Year')) if row.get('Year') and str(row.get('Year')).isdigit() else None,
+                'letterboxd_id': str(row.get('Film_ID', '')) if row.get('Film_ID') else None,
                 'review_text': str(row.get('Review', '')),
                 'rating': float(row.get('Rating')) if row.get('Rating') else None,
-                'published_date': parse_date_for_db(row.get('Date', row.get('Watched Date', None))),
+                'published_date': parse_date_for_db(row.get('Review_Date', row.get('Date', None))),
+                'likes_count': int(row.get('Review_Likes', 0)) if row.get('Review_Likes') else 0,
+                'comments_count': int(row.get('Review_Comments', 0)) if row.get('Review_Comments') else 0,
                 'contains_spoilers': bool(row.get('Contains Spoilers', False))
             })
         
@@ -253,6 +267,21 @@ def parse_date_for_db(date_value):
     except Exception:
         pass
     return None
+
+def _parse_rewatch_status(rewatch_value):
+    """Parse rewatch status from various formats (Yes/No, True/False, 1/0)"""
+    if not rewatch_value:
+        return False
+    
+    if isinstance(rewatch_value, bool):
+        return rewatch_value
+    
+    if isinstance(rewatch_value, (int, float)):
+        return bool(rewatch_value)
+    
+    # Handle string values
+    rewatch_str = str(rewatch_value).lower().strip()
+    return rewatch_str in ['yes', 'true', '1', 'y']
 
 def extract_zip_file(uploaded_file, temp_dir):
     """Extract uploaded zip file to temporary directory"""
@@ -353,6 +382,11 @@ async def get_analysis(username: str, db: Session = Depends(get_db)):
     recent_ratings = rating_repo.get_ratings_by_profile(profile.id, limit=20)
     recent_reviews = review_repo.get_reviews_by_profile(profile.id, limit=10)
     
+    # Get recent watching trend (movies with watched dates)
+    recent_watching = rating_repo.get_ratings_by_profile(profile.id)
+    recent_watching_with_dates = [r for r in recent_watching if r.watched_date]
+    recent_watching_sorted = sorted(recent_watching_with_dates, key=lambda x: x.watched_date, reverse=True)[:10]
+    
     # Calculate detailed film counts
     all_entries = rating_repo.get_ratings_by_profile(profile.id)
     total_films = len(all_entries)
@@ -390,6 +424,15 @@ async def get_analysis(username: str, db: Session = Depends(get_db)):
                 "published_date": r.published_date.isoformat() if r.published_date else None,
                 "likes_count": r.likes_count
             } for r in recent_reviews
+        ],
+        "recent_watching_trend": [
+            {
+                "movie_title": r.movie_title,
+                "movie_year": r.movie_year,
+                "watched_date": r.watched_date.isoformat() if r.watched_date else None,
+                "rating": r.rating,
+                "is_rewatch": r.is_rewatch
+            } for r in recent_watching_sorted
         ]
     }
 

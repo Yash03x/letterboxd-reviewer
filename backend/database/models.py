@@ -75,6 +75,8 @@ class Rating(Base):
     # Additional metadata
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     tags = Column(JSON, nullable=True)  # Array of tags
+    film_slug = Column(String(200), nullable=True)
+    poster_url = Column(String(500), nullable=True)
     
     # Relationships
     profile = relationship("Profile", back_populates="ratings")
