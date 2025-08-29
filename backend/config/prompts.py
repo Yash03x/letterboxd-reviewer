@@ -10,13 +10,13 @@ def get_profile_analysis_prompt(profile1, profile2, patterns1, patterns2, genres
 ## 🎬 USER PROFILES
 
 **{profile1.username}:**
-• {profile1.total_movies} movies rated (avg: {profile1.avg_rating:.2f}★) | {len(watched1)} total watched
+• {len(profile1.ratings)} movies rated (avg: {profile1.avg_rating:.2f}★) | {len(watched1)} total watched
 • Personality: {personality1.get('type', 'unknown')} - {personality1.get('description', 'N/A')}
 • Top genres: {', '.join([f"{g} ({d['avg_rating']:.1f}★)" for g, d in sorted(genres1.items(), key=lambda x: x[1]['preference_score'], reverse=True)[:3]])}
 • Rating style: {patterns1.get('harsh_critic_ratio', 0):.1%} harsh, {patterns1.get('generous_rater_ratio', 0):.1%} generous
 
 **{profile2.username}:**
-• {profile2.total_movies} movies rated (avg: {profile2.avg_rating:.2f}★) | {len(watched2)} total watched
+• {len(profile2.ratings)} movies rated (avg: {profile2.avg_rating:.2f}★) | {len(watched2)} total watched
 • Personality: {personality2.get('type', 'unknown')} - {personality2.get('description', 'N/A')}
 • Top genres: {', '.join([f"{g} ({d['avg_rating']:.1f}★)" for g, d in sorted(genres2.items(), key=lambda x: x[1]['preference_score'], reverse=True)[:3]])}
 • Rating style: {patterns2.get('harsh_critic_ratio', 0):.1%} harsh, {patterns2.get('generous_rater_ratio', 0):.1%} generous
@@ -84,7 +84,7 @@ def get_individual_analysis_prompt(profile, patterns, genres, personality, detai
 ## 🎬 COMPREHENSIVE USER PROFILE: {profile.username}
 
 ### 📊 CORE STATISTICS
-• **Total movies rated:** {profile.total_movies} | **Average rating:** {profile.avg_rating:.2f}★
+• **Total movies rated:** {len(profile.ratings)} | **Average rating:** {profile.avg_rating:.2f}★
 • **Total reviews:** {profile.total_reviews} | **Join date:** {profile.join_date.strftime('%B %Y') if profile.join_date else 'Unknown'}
 • **Movies watched:** {len(watched_movies)} total entries
 • **Watchlist items:** {len(watchlist)} movies queued

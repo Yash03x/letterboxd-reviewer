@@ -85,30 +85,33 @@ const Dashboard: React.FC = () => {
     refetch();
   };
 
-  if (isLoading || analyticsLoading) return <LoadingSpinner />;
+  if (isLoading) return <LoadingSpinner />;
   if (error) return <ErrorMessage message="Failed to load profiles" />;
 
   // Ensure profiles is an array
   const profilesArray = Array.isArray(profiles) ? profiles : [];
+
+  // Data from analytics query is now the single source of truth for dashboard stats
+  const totalProfiles = analytics?.system_stats?.total_profiles ?? 0;
+  const totalMovies = analytics?.system_stats?.total_movies_tracked ?? 0;
+  const totalReviews = analytics?.system_stats?.total_reviews ?? 0;
   
-  const totalProfiles = profilesArray.length;
-  
-  // Use analytics data if available, otherwise fall back to profile summation
-  const totalMovies = analytics?.unique_movies_count || profilesArray.reduce((sum, profile) => sum + (profile.total_films || 0), 0);
-  const totalReviews = profilesArray.reduce((sum, profile) => sum + (profile.total_reviews || 0), 0);
+  // Calculate average rating from profiles data, as it's a client-side aggregation of profile-specific data
   const avgRating = profilesArray.length 
     ? profilesArray.reduce((sum, profile) => sum + (profile.avg_rating || 0), 0) / profilesArray.length 
     : 0;
 
-  // Calculate additional metrics
+  // Calculate completion rate based on profile statuses
   const activeProfiles = profilesArray.filter(p => p.scraping_status === 'completed').length;
   const completionRate = totalProfiles > 0 ? (activeProfiles / totalProfiles) * 100 : 0;
   
-  // Use analytics data for real rating distribution
-  const aggregateRatingDistribution = analytics?.rating_distribution || {};
-  
-  // Use analytics data for real activity data  
-  const aggregateActivityData = analytics?.activity_data || [];
+  // Use analytics data directly
+  const aggregateRatingDistribution = analytics?.rating_distribution ?? {};
+  const aggregateActivityData = analytics?.activity_data ?? [];
+
+  if (analyticsLoading) {
+    return <LoadingSpinner text="Loading dashboard analytics..." />;
+  }
 
   return (
     <motion.div 

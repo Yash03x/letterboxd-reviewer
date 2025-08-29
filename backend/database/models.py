@@ -18,7 +18,6 @@ class Profile(Base):
     scraping_status = Column(String(20), default="pending")
     
     # Profile metrics
-    total_movies = Column(Integer, default=0)
     avg_rating = Column(Float, default=0.0)
     total_reviews = Column(Integer, default=0)
     join_date = Column(Date, nullable=True)
