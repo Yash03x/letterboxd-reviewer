@@ -41,7 +41,6 @@ class ProfileData:
         self.total_movies = len(self.ratings)
         self.avg_rating = self.ratings['Rating'].mean() if not self.ratings.empty else 0
         self.total_reviews = len(self.reviews)
-        self.join_date = pd.to_datetime(self.profile_info.get('Date Joined', '')) if self.profile_info.get('Date Joined') else None
 
 
 class LocalLLMInterface:

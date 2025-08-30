@@ -29,22 +29,19 @@ from dataclasses import dataclass, asdict
 class ProfileInfo:
     """Profile information structure"""
     username: str
-    display_name: str = ""
     bio: str = ""
-    location: str = ""
-    website: str = ""
-    join_date: Optional[str] = None
-    avatar_url: str = ""
     total_films: int = 0
     total_reviews: int = 0
     total_lists: int = 0
     following_count: int = 0
     followers_count: int = 0
     favorite_films: List[Dict] = None
-
+    
     def __post_init__(self):
         if self.favorite_films is None:
             self.favorite_films = []
+
+    pass
 
 
 @dataclass
@@ -154,68 +151,111 @@ class EnhancedLetterboxdScraper:
         
         # Extract profile information
         try:
-            # Display name
-            profile_name = soup.find('h1', class_='title-1')
-            if profile_name:
-                self.profile_info.display_name = profile_name.get_text().strip()
-            
-            # Bio
-            bio_element = soup.find('div', class_='profile-text')
-            if bio_element:
-                self.profile_info.bio = bio_element.get_text().strip()
-            
-            # Location and website
-            profile_metadata = soup.find('section', class_='profile-metadata')
-            if profile_metadata:
-                location = profile_metadata.find('span', class_='location')
-                if location:
-                    self.profile_info.location = location.get_text().strip()
+            # Extract profile data from meta tags (this is available in static HTML)
+            meta_description = soup.find('meta', {'name': 'description'})
+            if meta_description:
+                description = meta_description.get('content', '')
                 
-                website = profile_metadata.find('a', class_='url')
-                if website:
-                    self.profile_info.website = website.get('href', '')
+                # Extract bio from description
+                if 'Bio:' in description:
+                    bio_start = description.find('Bio:') + 4
+                    # Look for the end of bio (either &quot; or end of string)
+                    bio_end = description.find('&quot;', bio_start)
+                    if bio_end == -1:
+                        bio_end = len(description)
+                    if bio_end > bio_start:
+                        bio_text = description[bio_start:bio_end].strip()
+                        # Clean up HTML entities
+                        bio_text = bio_text.replace('&quot;', '"').replace('&amp;', '&')
+                        self.profile_info.bio = bio_text
+                
+                # Extract favorite movies from description
+                if 'Favorites:' in description:
+                    favorites_start = description.find('Favorites:') + 10
+                    # Look for the end of favorites (before "Bio:" or end of string)
+                    bio_start = description.find('Bio:', favorites_start)
+                    if bio_start > favorites_start:
+                        favorites_end = bio_start
+                    else:
+                        favorites_end = len(description)
+                    
+                    if favorites_end > favorites_start:
+                        favorites_text = description[favorites_start:favorites_end].strip()
+                        # Parse favorites like "The Dark Knight (2008), Past Lives (2023), Your Name. (2016), The Conjuring (2013)"
+                        favorites = []
+                        for fav in favorites_text.split(', '):
+                            if '(' in fav and ')' in fav:
+                                title = fav[:fav.rfind('(')].strip()
+                                year = fav[fav.rfind('(')+1:fav.rfind(')')].strip()
+                                favorites.append({
+                                    'title': title,
+                                    'year': year
+                                })
+                        self.profile_info.favorite_films = favorites
             
-            # Avatar URL
-            avatar = soup.find('img', class_='avatar')
-            if avatar:
-                self.profile_info.avatar_url = avatar.get('src', '')
+            # Note: Join date is not reliably available in static HTML
+            # Letterboxd loads this via JavaScript, so we skip it to avoid wrong dates
             
-            # Statistics from profile page
-            stats = soup.find_all('a', class_='has-icon')
-            for stat in stats:
-                stat_text = stat.get_text().strip()
-                if 'films' in stat_text.lower():
-                    # Extract number from text like "1,234 films"
-                    numbers = re.findall(r'[\d,]+', stat_text)
-                    if numbers:
-                        self.profile_info.total_films = int(numbers[0].replace(',', ''))
-                elif 'reviews' in stat_text.lower():
-                    numbers = re.findall(r'[\d,]+', stat_text)
-                    if numbers:
-                        self.profile_info.total_reviews = int(numbers[0].replace(',', ''))
-                elif 'lists' in stat_text.lower():
-                    numbers = re.findall(r'[\d,]+', stat_text)
-                    if numbers:
-                        self.profile_info.total_lists = int(numbers[0].replace(',', ''))
+            # Statistics from profile page - try multiple selectors
+            # Extract list count from profile page (this is available in static HTML)
+            stats_links = soup.find_all('a', href=re.compile(r'/lists/'))
+            for link in stats_links:
+                link_text = link.get_text().strip()
+                if '/lists/' in link.get('href', ''):
+                    numbers = re.findall(r'(\d+(?:,\d+)*)', link_text)
+                    if numbers and numbers[0].strip():
+                        try:
+                            self.profile_info.total_lists = int(numbers[0].replace(',', ''))
+                            break
+                        except ValueError:
+                            continue
             
-            # Favorite films (top 4)
-            favorite_films = soup.find_all('li', class_='poster-container')[:4]
-            for film in favorite_films:
-                film_link = film.find('a')
-                if film_link:
-                    film_img = film.find('img')
-                    if film_img:
-                        self.profile_info.favorite_films.append({
-                            'title': film_img.get('alt', ''),
-                            'url': film_link.get('href', ''),
-                            'poster': film_img.get('src', '')
-                        })
+            # Following and Followers count
+            following_link = soup.find('a', href=f'/{self.username}/following/')
+            if following_link:
+                following_text = following_link.get_text().strip()
+                numbers = re.findall(r'[\d,]+', following_text)
+                if numbers:
+                    self.profile_info.following_count = int(numbers[0].replace(',', ''))
+            
+            followers_link = soup.find('a', href=f'/{self.username}/followers/')
+            if followers_link:
+                followers_text = followers_link.get_text().strip()
+                numbers = re.findall(r'[\d,]+', followers_text)
+                if numbers:
+                    self.profile_info.followers_count = int(numbers[0].replace(',', ''))
+            
+            # Note: Favorite films are also loaded via JavaScript and not available in static HTML
+            
+            # Debug output
+            if self.debug:
+                print(f"Profile data extracted:")
+                print(f"  Bio: {self.profile_info.bio[:100]}...")
+                print(f"  Following: {self.profile_info.following_count}")
+                print(f"  Followers: {self.profile_info.followers_count}")
+                print(f"  Total lists: {self.profile_info.total_lists}")
+                print(f"  Favorite films: {len(self.profile_info.favorite_films)}")
+                if self.profile_info.favorite_films:
+                    for i, fav in enumerate(self.profile_info.favorite_films[:3]):
+                        print(f"    {i+1}. {fav.get('title', '')} ({fav.get('year', '')})")
+                print(f"  Note: Total films, reviews will be calculated from scraped data")
             
         except Exception as e:
             print(f"Error scraping profile info: {e}")
         
         return self.profile_info
-    
+
+    def update_profile_statistics(self):
+        """Update profile statistics based on scraped data."""
+        # Update total films count
+        self.profile_info.total_films = len(self.films_data)
+        
+        # Update total reviews count
+        self.profile_info.total_reviews = len(self.reviews_data)
+        
+        # Note: total_lists is already set from profile page extraction
+        # We don't override it with len(self.lists_data) because lists page is JS-heavy
+
     def scrape_all_films(self) -> List[Dict]:
         """Scrape all films from the user's films page."""
         print(f"🎬 Scraping all films for {self.username}...")
@@ -717,23 +757,18 @@ class EnhancedLetterboxdScraper:
     def _save_profile_info(self):
         """Saves the main profile information."""
         fieldnames = [
-            'Username', 'Display_Name', 'Bio', 'Location', 'Website', 'Join_Date',
-            'Avatar_URL', 'Total_Films', 'Total_Reviews', 'Total_Lists',
-            'Following_Count', 'Followers_Count'
+            'Username', 'Bio', 'Total_Films', 'Total_Reviews', 'Total_Lists',
+            'Following_Count', 'Followers_Count', 'Favorite_Films'
         ]
         data = [{
             'Username': self.profile_info.username,
-            'Display_Name': self.profile_info.display_name,
             'Bio': self.profile_info.bio,
-            'Location': self.profile_info.location,
-            'Website': self.profile_info.website,
-            'Join_Date': self.profile_info.join_date,
-            'Avatar_URL': self.profile_info.avatar_url,
             'Total_Films': self.profile_info.total_films,
             'Total_Reviews': self.profile_info.total_reviews,
             'Total_Lists': self.profile_info.total_lists,
             'Following_Count': self.profile_info.following_count,
-            'Followers_Count': self.profile_info.followers_count
+            'Followers_Count': self.profile_info.followers_count,
+            'Favorite_Films': json.dumps(self.profile_info.favorite_films) if self.profile_info.favorite_films else ""
         }]
         self._write_csv("profile.csv", data, fieldnames)
 
@@ -868,6 +903,7 @@ class EnhancedLetterboxdScraper:
         self.scrape_reviews()
         self.scrape_watchlist()
         self.scrape_custom_lists()
+        self.update_profile_statistics() # Add this line to update statistics
         
         # Save all data
         self.save_all_data()

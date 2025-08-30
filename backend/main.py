@@ -389,7 +389,7 @@ async def get_analysis(username: str, db: Session = Depends(get_db)):
     
     # Calculate detailed film counts
     all_entries = rating_repo.get_ratings_by_profile(profile.id)
-    total_films = len(all_entries)
+    total_films = profile.total_films or len(all_entries)  # Use profile total_films if available
     rated_films = len([r for r in all_entries if r.rating is not None and r.rating > 0])
     liked_films = len([r for r in all_entries if r.is_liked])
     
@@ -400,7 +400,11 @@ async def get_analysis(username: str, db: Session = Depends(get_db)):
         "liked_films": liked_films,
         "avg_rating": profile.avg_rating,
         "total_reviews": profile.total_reviews,
-        "join_date": profile.join_date.isoformat() if profile.join_date else None,
+        "total_lists": profile.total_lists,
+        "following_count": profile.following_count,
+        "followers_count": profile.followers_count,
+        "bio": profile.bio,
+        "favorite_films": profile.favorite_films or [],
         "last_scraped_at": profile.last_scraped_at.isoformat() if profile.last_scraped_at else None,
         "scraping_status": profile.scraping_status,
         "enhanced_metrics": profile.enhanced_metrics or {},
@@ -527,7 +531,12 @@ async def upload_files(files: List[UploadFile] = File(...), db: Session = Depend
                         existing_profile.id,
                         avg_rating=analyzer_profile.avg_rating,
                         total_reviews=analyzer_profile.total_reviews,
-                        join_date=analyzer_profile.join_date,
+                        total_films=int(analyzer_profile.profile_info.get('Total_Films', 0)),
+                        total_lists=int(analyzer_profile.profile_info.get('Total_Lists', 0)),
+                        following_count=int(analyzer_profile.profile_info.get('Following_Count', 0)),
+                        followers_count=int(analyzer_profile.profile_info.get('Followers_Count', 0)),
+                        bio=analyzer_profile.profile_info.get('Bio', ''),
+                        favorite_films=json.loads(analyzer_profile.profile_info.get('Favorite_Films', '[]')) if analyzer_profile.profile_info.get('Favorite_Films') else [],
                         last_scraped_at=datetime.utcnow(),
                         scraping_status="completed"
                     )
@@ -536,7 +545,12 @@ async def upload_files(files: List[UploadFile] = File(...), db: Session = Depend
                         username=username,
                         avg_rating=analyzer_profile.avg_rating,
                         total_reviews=analyzer_profile.total_reviews,
-                        join_date=analyzer_profile.join_date,
+                        total_films=int(analyzer_profile.profile_info.get('Total_Films', 0)),
+                        total_lists=int(analyzer_profile.profile_info.get('Total_Lists', 0)),
+                        following_count=int(analyzer_profile.profile_info.get('Following_Count', 0)),
+                        followers_count=int(analyzer_profile.profile_info.get('Followers_Count', 0)),
+                        bio=analyzer_profile.profile_info.get('Bio', ''),
+                        favorite_films=json.loads(analyzer_profile.profile_info.get('Favorite_Films', '[]')) if analyzer_profile.profile_info.get('Favorite_Films') else [],
                         last_scraped_at=datetime.utcnow(),
                         scraping_status="completed"
                     )
@@ -644,7 +658,12 @@ async def run_scraping_task(job_id: int, username: str, db: Session):
                 profile.id,
                 avg_rating=analyzer_profile.avg_rating,
                 total_reviews=analyzer_profile.total_reviews,
-                join_date=analyzer_profile.join_date,
+                total_films=int(analyzer_profile.profile_info.get('Total_Films', 0)),
+                total_lists=int(analyzer_profile.profile_info.get('Total_Lists', 0)),
+                following_count=int(analyzer_profile.profile_info.get('Following_Count', 0)),
+                followers_count=int(analyzer_profile.profile_info.get('Followers_Count', 0)),
+                bio=analyzer_profile.profile_info.get('Bio', ''),
+                favorite_films=json.loads(analyzer_profile.profile_info.get('Favorite_Films', '[]')) if analyzer_profile.profile_info.get('Favorite_Films') else [],
                 last_scraped_at=datetime.utcnow(),
                 scraping_status="completed"
             )

@@ -20,7 +20,10 @@ class Profile(Base):
     # Profile metrics
     avg_rating = Column(Float, default=0.0)
     total_reviews = Column(Integer, default=0)
-    join_date = Column(Date, nullable=True)
+    total_films = Column(Integer, default=0)
+    total_lists = Column(Integer, default=0)
+    following_count = Column(Integer, default=0)
+    followers_count = Column(Integer, default=0)
     
     # Additional metadata
     is_active = Column(Boolean, default=True)
@@ -31,6 +34,7 @@ class Profile(Base):
     
     # Enhanced metrics stored as JSON
     enhanced_metrics = Column(JSON, nullable=True)
+    favorite_films = Column(JSON, nullable=True)  # Store favorite films as JSON array
     
     # Relationships
     ratings = relationship("Rating", back_populates="profile", cascade="all, delete-orphan")
@@ -42,16 +46,19 @@ class Profile(Base):
         return {
             "id": self.id,
             "username": self.username,
-            # total_movies removed - use calculated total_films instead
             "avg_rating": self.avg_rating,
             "total_reviews": self.total_reviews,
-            "join_date": self.join_date.isoformat() if self.join_date else None,
+            "total_films": self.total_films,
+            "total_lists": self.total_lists,
+            "following_count": self.following_count,
+            "followers_count": self.followers_count,
             "last_scraped_at": self.last_scraped_at.isoformat() if self.last_scraped_at else None,
             "scraping_status": self.scraping_status,
             "profile_image_url": self.profile_image_url,
             "bio": self.bio,
             "location": self.location,
             "website": self.website,
+            "favorite_films": self.favorite_films or [],
             "enhanced_metrics": self.enhanced_metrics or {}
         }
 

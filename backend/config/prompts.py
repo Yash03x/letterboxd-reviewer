@@ -85,7 +85,7 @@ def get_individual_analysis_prompt(profile, patterns, genres, personality, detai
 
 ### 📊 CORE STATISTICS
 • **Total movies rated:** {len(profile.ratings)} | **Average rating:** {profile.avg_rating:.2f}★
-• **Total reviews:** {profile.total_reviews} | **Join date:** {profile.join_date.strftime('%B %Y') if profile.join_date else 'Unknown'}
+• **Total reviews:** {profile.total_reviews}
 • **Movies watched:** {len(watched_movies)} total entries
 • **Watchlist items:** {len(watchlist)} movies queued
 
@@ -203,7 +203,7 @@ CORE STATISTICS:
 • Total movies rated: {total_movies}
 • Average rating: {avg_rating:.2f}★
 • Total reviews written: {total_reviews}
-• Join date: {profile.join_date.strftime('%B %Y') if profile.join_date else 'Unknown'}
+
 
 TOP RATED MOVIES (4.5+ stars):
 {chr(10).join(['• ' + movie for movie in top_movies]) if top_movies else '• No highly rated movies found'}

@@ -137,14 +137,17 @@ class RatingRepository:
     
     def get_global_monthly_activity(self) -> List[Dict]:
         """Get monthly activity data across all profiles"""
-        cutoff_date = datetime.now().date() - timedelta(days=365)
+        # Calculate cutoff month (12 months ago from current month)
+        current_date = datetime.utcnow().date()
+        cutoff_month = current_date.replace(day=1) - timedelta(days=365)
+        cutoff_month = cutoff_month.replace(day=1)  # Start of the month
         
         results = self.db.query(
             func.strftime('%Y-%m', Rating.watched_date).label('month'),
             func.count(Rating.id).label('movies_watched'),
             func.avg(Rating.rating).label('avg_rating')
         ).filter(
-            Rating.watched_date >= cutoff_date,
+            Rating.watched_date >= cutoff_month,
             Rating.watched_date.isnot(None)
         ).group_by(
             func.strftime('%Y-%m', Rating.watched_date)
