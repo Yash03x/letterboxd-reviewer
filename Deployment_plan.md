@@ -11,7 +11,7 @@ Evolving letterboxd-reviewer from a single-person tool into a multi-user product
 ```mermaid
 graph TB
     subgraph "User Browser"
-        A["React SPA\nspyboxd.com\n(Vercel CDN)"]
+        A["Next.js 15 App Router\nspyboxd.com\n(Cloudflare Pages)"]        
         A1["Clerk Auth UI"]
         A2["TanStack Query"]
         A3["EventSource SSE\n(scrape progress)"]
@@ -22,8 +22,8 @@ graph TB
         LB["Letterboxd.com\n(scraped target)"]
     end
 
-    subgraph "Vercel CDN"
-        VCDN["Static React Build\nGlobal Edge Network"]
+    subgraph "Cloudflare Pages"
+        VCDN["Next.js Static Export\nGlobal Edge Network"]
     end
 
     subgraph "Hetzner CX22 VPS — api.spyboxd.com"
@@ -49,7 +49,7 @@ graph TB
         end
     end
 
-    %% Browser → Vercel
+    %% Browser → Cloudflare Pages
     A --> VCDN
 
     %% Browser → API
@@ -116,7 +116,7 @@ graph TB
 | Job queue | **Celery + Redis** | Long-running scrapes can't block FastAPI workers; celery beat handles daily schedule |
 | Progress updates | **SSE (Server-Sent Events)** | Replaces polling; no new infra, native FastAPI support |
 | Backend hosting | **Hetzner CX22** | Long-running processes, no timeout limits, cheapest option |
-| Frontend hosting | **Vercel** | Free CDN for static React build |
+| Frontend hosting | **Cloudflare Pages** | Free global CDN, integrates with Cloudflare DNS (spyboxd.com already on Cloudflare), Next.js static export support |
 | Connection pooling | **pgBouncer** | Celery opens many DB connections; pgBouncer keeps Postgres happy |
 
 ---
@@ -232,10 +232,10 @@ CREATE TABLE scrape_rate_limits (
 - `EnhancedLetterboxdScraper` in [backend/scraper.py](backend/scraper.py) — scraper code is fine
 - SQLAlchemy ORM layer — just point at Postgres via env var
 - FastAPI framework
-- React 19 + TypeScript + TanStack Query
+- Next.js 15 App Router + TypeScript + TanStack Query
 
 ### Add
-- **Clerk** React SDK (`@clerk/clerk-react`) — wrap App in `<ClerkProvider>`
+- **Clerk** Next.js SDK (`@clerk/nextjs`) — wrap app in `<ClerkProvider>`, use `auth()` in Server Components
 - **FastAPI auth dependency** — `verify_clerk_token()` validates JWT on every route
 - **Celery + Redis** — replace `BackgroundTasks` with `scrape_profile_task.apply_async()`
 - **Celery Beat** — daily `schedule_daily_scrapes` task at 3am UTC
@@ -341,7 +341,7 @@ nginx.service           # Reverse proxy + SSL
 | 4 | Add SSE progress endpoint; update frontend EventSource | 1 day |
 | 5 | Add Celery Beat daily scheduler | 1 day |
 | 6 | Provision Hetzner, configure systemd, Nginx SSL, deploy | 1-2 days |
-| 7 | Deploy frontend to Vercel, point spyboxd.com DNS | 0.5 day |
+| 7 | Deploy frontend to Cloudflare Pages, point spyboxd.com DNS (already on Cloudflare) | 0.5 day |
 
 ---
 
@@ -350,9 +350,9 @@ nginx.service           # Reverse proxy + SSL
 | Service | Cost |
 |---------|------|
 | Hetzner CX22 (VPS) | ~$5/month |
-| Vercel (React frontend) | $0 |
+| Cloudflare Pages (Next.js frontend) | $0 |
 | Clerk (up to 10k MAU) | $0 |
-| Domain | ~$1/month |
+| Domain (already on Cloudflare) | ~$1/month |
 | **Total** | **~$6/month** |
 
 Scale-up: if scrape queue grows, upgrade to Hetzner CX32 (~$8.50) or add a second worker node. Clerk stays free until 10k users.
@@ -368,5 +368,5 @@ Scale-up: if scrape queue grows, upgrade to Hetzner CX32 (~$8.50) or add a secon
 5. Add same username as a second user → existing profile reused, not re-scraped if fresh
 6. Wait for 3am or manually trigger `schedule_daily_scrapes` → all stale profiles queued
 7. Manual trigger within 2hr window → 429 rate limit response
-8. `https://spyboxd.com` loads React app from Vercel CDN
+8. `https://spyboxd.com` loads Next.js app from Cloudflare Pages
 9. `https://api.spyboxd.com/docs` serves FastAPI docs (Nginx proxied)
