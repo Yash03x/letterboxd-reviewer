@@ -1,7 +1,9 @@
+'use client';
+
 import React, { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useNavigate } from 'react-router-dom';
+import { useRouter } from 'next/navigation';
 import { profileApi, scraperApi, dashboardApi } from '../services/api';
 import { 
   ArrowPathIcon,
@@ -28,7 +30,7 @@ import ActivityChart from '../components/Charts/ActivityChart';
 const Dashboard: React.FC = () => {
   const [refreshingProfile, setRefreshingProfile] = useState<string | null>(null);
   const [deletingProfile, setDeletingProfile] = useState<string | null>(null);
-  const navigate = useNavigate();
+  const router = useRouter();
   
   const { data: profiles, isLoading, error, refetch } = useQuery({
     queryKey: ['profiles'],
@@ -149,7 +151,7 @@ const Dashboard: React.FC = () => {
           </motion.button>
           
           <motion.button 
-            onClick={() => navigate('/profiles')}
+            onClick={() => router.push('/profiles')}
             className="btn-primary flex items-center space-x-2"
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
@@ -331,7 +333,7 @@ const Dashboard: React.FC = () => {
               
               <div className="flex justify-center space-x-4">
                 <motion.button 
-                  onClick={() => navigate('/profiles')}
+                  onClick={() => router.push('/profiles')}
                   className="btn-primary flex items-center space-x-2"
                   whileHover={{ scale: 1.05 }}
                   whileTap={{ scale: 0.95 }}

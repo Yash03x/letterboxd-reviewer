@@ -1,5 +1,8 @@
+'use client';
+
 import React, { useState, useEffect } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   HomeIcon, 
@@ -21,7 +24,7 @@ interface LayoutProps {
 }
 
 const Layout: React.FC<LayoutProps> = ({ children }) => {
-  const location = useLocation();
+  const pathname = usePathname();
   const [isLoaded, setIsLoaded] = useState(false);
   const [currentTime, setCurrentTime] = useState(new Date());
 
@@ -62,7 +65,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     }
   ];
 
-  const isActive = (path: string) => location.pathname === path;
+  const isActive = (path: string) => pathname === path;
 
   return (
     <motion.div 
@@ -141,7 +144,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                   animate={{ x: 0, opacity: 1 }}
                   transition={{ delay: 0.3 + (index * 0.1) }}
                 >
-                  <Link to={item.path}>
+                  <Link href={item.path}>
                     <motion.div
                       className={`
                         relative group flex items-center space-x-4 p-4 rounded-xl transition-all duration-300
@@ -267,7 +270,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         <div className="flex-1 p-6">
           <AnimatePresence mode="wait">
             <motion.div
-              key={location.pathname}
+              key={pathname}
               initial={{ opacity: 0, y: 20, scale: 0.98 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: -20, scale: 1.02 }}
