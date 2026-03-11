@@ -1,139 +1,230 @@
-# 🎬 Letterboxd Multi-Profile Analyzer
+# 🎬 Letterboxd Reviewer Pro
 
-A sophisticated system for analyzing and comparing up to 4 Letterboxd user profiles using both statistical analysis and local/cloud LLM-powered insights. Now supports file uploads for easy data import!
+A modern, full-stack application for analyzing and tracking Letterboxd profiles with real-time data synchronization, advanced analytics, and a cinema-inspired UI.
 
-## 🌟 Features
+## ✨ Features
 
-- **Multi-Profile Comparison**: Compare up to 4 Letterboxd profiles simultaneously
-- **File Upload Support**: Upload Letterboxd export ZIP files directly in the web interface
-- **Local Data Support**: Use existing local data folders
-- **Advanced Statistical Analysis**: Rating patterns, genre preferences, personality profiling
-- **Local LLM Support**: Ollama/LM Studio integration for privacy-focused analysis
-- **OpenAI Integration**: Optional cloud-based analysis with GPT models
-- **Personality Insights**: Generate detailed personality profiles from viewing data
-- **Compatibility Scoring**: Multi-dimensional compatibility assessment
-- **Genre Intelligence**: Keyword-based genre detection and preference analysis
-- **Web Interface**: Streamlit-based dashboard for interactive analysis
-- **Flexible Data Sources**: Mix uploaded files with local data
+### 🎯 Core Functionality
+- **Profile Management**: Add, update, and manage multiple Letterboxd profiles
+- **Real-time Scraping**: Background data collection with progress tracking
+- **Advanced Analytics**: Comprehensive statistics and insights
+- **Data Persistence**: SQLite database with proper relationships
+- **Export & Backup**: Data export and backup capabilities
 
-## 📁 Project Structure
+### 🎨 User Experience  
+- **Cinema-themed UI**: Glassmorphism design with film-inspired aesthetics
+- **Smooth Animations**: Framer Motion for fluid transitions and micro-interactions
+- **Responsive Design**: Mobile-first approach with TailwindCSS
+- **Real-time Updates**: Manual refresh with optimistic UI updates
+- **Interactive Charts**: Chart.js visualizations for data insights
 
-- `unified_analyzer.py` - Main analyzer with all functionality
-- `streamlit_app.py` - Web interface dashboard
-- `requirements.txt` - Dependencies
-- `README.md` - This documentation
+### 🔧 Technical Stack
+- **Backend**: FastAPI with async support and background tasks
+- **Frontend**: React 18 with TypeScript and React Query
+- **Database**: SQLAlchemy ORM with SQLite
+- **Styling**: TailwindCSS with custom cinema theme
+- **Charts**: Chart.js with react-chartjs-2
+- **Animations**: Framer Motion for advanced animations
 
 ## 🚀 Quick Start
 
-### 1. Install Dependencies
+### Prerequisites
+- Python 3.9+
+- Node.js 18+
+- npm or yarn
+
+### 🎬 Option 1: Automated Setup (Recommended)
+
 ```bash
-pip install -r requirements.txt
+# Clone the repository
+git clone <repository-url>
+cd letterboxd-reviewer
+
+# Run the setup script
+./scripts/setup.sh
+
+# Start both servers
+./scripts/start-all.sh
 ```
 
-### 2. Prepare Data
+### 🛠️ Option 2: Manual Setup
 
-**Option 1: Upload Files in Web Interface (Recommended)**
-1. Export your Letterboxd data from Settings → Import & Export → Export Your Data
-2. Keep the ZIP files - no need to extract
-3. Use the web interface to upload and analyze
-
-**Option 2: Use Local Data**
-1. Export your Letterboxd data from Settings → Import & Export → Export Your Data
-2. Extract ZIP files to separate folders
-3. The system will auto-detect local data folders
-
-### 3. Run Analysis
-
-**Web Interface (Recommended):**
+#### Backend Setup
 ```bash
-streamlit run streamlit_app.py
+# Navigate to backend
+cd backend
+
+# Create virtual environment
+python3 -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install dependencies
+pip install -r ../requirements.txt
+
+# Create data directories
+mkdir -p ../data/{scraped,exports,backups}
+
+# Start the server
+python3 -m uvicorn main:app --reload --port 8000
 ```
 
-Then:
-1. Configure 2-4 profiles using the web interface
-2. Choose between uploading ZIP files or using local data
-3. Load profiles and start analysis
-
-**Command Line:**
+#### Frontend Setup
 ```bash
-python3 unified_analyzer.py
+# Navigate to frontend (new terminal)
+cd frontend
+
+# Install dependencies
+npm install
+
+# Start development server
+npm start
 ```
 
-### 4. Enable LLM Analysis (Optional)
+## 📁 Project Structure
 
-**For Local LLM (Recommended):**
-- Install [Ollama](https://ollama.ai) or [LM Studio](https://lmstudio.ai)
-- Start the service
-- The analyzer will auto-detect and use local LLM
+```
+letterboxd-reviewer/
+├── 📁 backend/                 # FastAPI backend application
+│   ├── 📁 config/             # Configuration files
+│   ├── 📁 core/               # Core analysis logic
+│   ├── 📁 database/           # Database models & repositories
+│   ├── main.py                # FastAPI application entry point
+│   └── scraper.py             # Web scraping functionality
+├── 📁 frontend/               # React frontend application
+│   ├── 📁 public/             # Static assets
+│   ├── 📁 src/
+│   │   ├── 📁 components/     # Reusable React components
+│   │   ├── 📁 pages/          # Application pages
+│   │   └── 📁 services/       # API integration
+│   ├── package.json
+│   └── tailwind.config.js     # TailwindCSS configuration
+├── 📁 data/                   # Application data
+│   ├── 📁 scraped/           # Scraped profile data
+│   ├── 📁 exports/           # Exported data files
+│   └── 📁 backups/           # Database backups
+├── 📁 scripts/               # Automation scripts
+│   ├── setup.sh             # Project setup
+│   ├── start-all.sh         # Start both servers
+│   ├── start-backend.sh     # Start backend only
+│   └── start-frontend.sh    # Start frontend only
+├── .env.example              # Environment variables template
+├── .gitignore               # Git ignore rules
+├── requirements.txt         # Python dependencies
+└── README.md               # This file
+```
 
-**For OpenAI:**
+## 🎯 Usage Guide
+
+### 1. 🏠 Dashboard
+- View system-wide statistics and metrics
+- Monitor active scraping jobs
+- Access quick actions for profile management
+- Interactive charts for data visualization
+
+### 2. 👥 Profile Manager
+- Add new Letterboxd profiles for tracking
+- Update existing profile information
+- Initiate data scraping operations
+- View scraping status and progress
+
+### 3. 🔄 Data Scraping
+- Background scraping with progress tracking
+- Real-time status updates
+- Comprehensive data collection (ratings, reviews, lists)
+- Error handling and retry mechanisms
+
+### 4. 📊 Analytics
+- Rating distribution analysis
+- Monthly activity trends
+- Profile comparison tools
+- Export functionality for further analysis
+
+## 🔧 API Endpoints
+
+### Profiles
+- `GET /profiles/` - List all profiles
+- `POST /profiles/create` - Create new profile
+- `PUT /profiles/{username}` - Update profile
+- `DELETE /profiles/{username}` - Delete profile
+- `GET /profiles/{username}/analysis` - Get detailed analysis
+
+### Scraping
+- `POST /scrape/profile/{username}` - Start scraping
+- `GET /scrape/status/{username}` - Check scraping status
+- `DELETE /profiles/{username}/data` - Clear scraped data
+
+### Analytics
+- `GET /analytics/dashboard` - System-wide statistics
+- `GET /profiles/suggestions/update` - Profiles needing updates
+
+## 🎨 Design System
+
+### Color Palette
+- **Cinema Orange**: Primary brand color (`#e65100`)
+- **Noir Black**: Deep backgrounds (`#0f172a`)
+- **Glass Effects**: Transparency with backdrop blur
+- **Gradient Accents**: Dynamic color transitions
+
+### Components
+- **Glassmorphism Cards**: Modern card design with transparency
+- **Animated Buttons**: Hover effects and micro-interactions
+- **Interactive Charts**: Responsive data visualizations
+- **Status Indicators**: Real-time status with animations
+
+## 🔒 Environment Configuration
+
+Create a `.env` file based on `.env.example`:
+
 ```bash
-export OPENAI_API_KEY="your-api-key"
-python3 unified_analyzer.py
+# Copy the example file
+cp .env.example .env
+
+# Edit with your configuration
+DATABASE_URL=sqlite:///./data/letterboxd_analyzer.db
+API_HOST=localhost
+API_PORT=8000
+FRONTEND_URL=http://localhost:3000
 ```
 
-## 📊 What You Get
+## 🚀 Deployment
 
-- **Multi-Profile Comparison**: Compare rating patterns across up to 4 users
-- **File Upload Support**: Easy drag-and-drop ZIP file uploads
-- **Compatibility Score**: Multi-dimensional compatibility percentage (2-profile mode)
-- **Personality Types**: Adventurous Critic, Enthusiastic Fan, etc.
-- **Genre Preferences**: Detailed breakdown of genre tastes
-- **Common Movies Analysis**: Agreements and disagreements
-- **LLM Insights**: Deep psychological analysis of taste compatibility
-- **Interactive Charts**: Visual comparisons and statistics
-
-## 🔧 Configuration
-
-**Web Interface**: No configuration needed! Upload files or select local data through the interface.
-
-**Command Line**: Update these paths in `unified_analyzer.py`:
-```python
-profile1_path = "path/to/user1/letterboxd/data"
-profile2_path = "path/to/user2/letterboxd/data"
+### Docker (Coming Soon)
+```bash
+# Build and start with Docker Compose
+docker-compose up --build
 ```
 
-## 🎯 Example Output
+### Manual Deployment
+1. Set up a production database (PostgreSQL recommended)
+2. Configure environment variables
+3. Build the frontend: `npm run build`
+4. Deploy with a production WSGI server (Gunicorn + Nginx)
 
-```
-Multi-Profile Analysis (4 users):
-- User profiles: hashtag7781, whiteknight03x, cinephile123, moviebuff456
-- Combined rating patterns and preferences
-- Individual personality analysis for each user
+## 🤝 Contributing
 
-Two-Profile Compatibility:
-Overall Compatibility: 82.6% 🟢
-hashtag7781: Enthusiastic Fan - Finds joy in most films
-whiteknight03x: Casual Viewer - Balanced approach
-Common movies: 66 | Avg difference: 0.66⭐
-Perfect agreements: The Dark Knight, Fight Club, Dune: Part Two
-```
+1. Fork the repository
+2. Create a feature branch: `git checkout -b feature/amazing-feature`
+3. Commit changes: `git commit -m 'Add amazing feature'`
+4. Push to branch: `git push origin feature/amazing-feature`
+5. Open a Pull Request
 
-## 🔄 Data Sources
+## 📝 License
 
-The system supports multiple data sources:
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-1. **ZIP File Upload**: Upload Letterboxd export ZIP files directly
-2. **Local Folders**: Use previously extracted data folders
-3. **Mixed Sources**: Combine uploaded files with local data
-4. **Auto-Detection**: Automatically finds and suggests local profiles
+## 🙏 Acknowledgments
 
-## 📱 Web Interface Features
+- **Letterboxd**: For the amazing platform and data
+- **React Community**: For the excellent ecosystem
+- **FastAPI**: For the modern Python web framework
+- **TailwindCSS**: For the utility-first CSS framework
 
-- **Responsive Design**: Works on desktop and mobile
-- **Drag & Drop**: Easy file uploading
-- **Real-time Analysis**: Live updates and progress indicators
-- **Interactive Charts**: Plotly-powered visualizations
-- **Multi-Profile Support**: Compare 2-4 profiles simultaneously
-- **LLM Integration**: Optional AI-powered insights
+## 📬 Support
 
-## 🤖 LLM Integration
+- **Issues**: Report bugs and feature requests via GitHub Issues
+- **Discussions**: Join community discussions in GitHub Discussions
+- **Documentation**: Check the `/docs` folder for detailed guides
 
-The system prioritizes local LLMs for privacy:
-1. **Ollama** (localhost:11434) - Detected automatically
-2. **LM Studio** (localhost:1234) - Detected automatically  
-3. **OpenAI** - Fallback option with API key
+---
 
-## 📄 License
-
-Free to use and modify. Built for the film community! 🎬
+**Made with ❤️ for film enthusiasts and data lovers**
