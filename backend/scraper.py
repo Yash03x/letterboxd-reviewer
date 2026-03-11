@@ -11,6 +11,7 @@ A comprehensive scraper for Letterboxd user profiles that extracts:
 """
 
 import requests
+import cloudscraper
 import csv
 import json
 import argparse
@@ -95,10 +96,15 @@ class EnhancedLetterboxdScraper:
             'stats': f"https://letterboxd.com/{username}/films/stats/",
         }
         
-        # Session setup
-        self.session = requests.Session()
+        # Session setup - use cloudscraper to bypass bot detection
+        self.session = cloudscraper.create_scraper(
+            browser={'browser': 'chrome', 'platform': 'darwin', 'mobile': False}
+        )
         self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
         })
         
         # Data storage

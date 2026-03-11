@@ -22,6 +22,7 @@ seaborn>=0.11.0
 # Web Scraping
 beautifulsoup4>=4.12.0
 selenium>=4.15.0
+cloudscraper>=1.2.71
 
 # Optional LLM Support
 # openai>=1.0.0
