@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Start Frontend Development Server Script
-echo "🎨 Starting Letterboxd Reviewer Frontend..."
+echo "🎨 Starting Spyboxd Frontend..."
 
 # Navigate to frontend directory
 cd "$(dirname "$0")/../frontend"

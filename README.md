@@ -1,4 +1,4 @@
-# 🎬 Letterboxd Reviewer Pro
+# 🎬 Spyboxd
 
 A modern, full-stack application for analyzing and tracking Letterboxd profiles with real-time data synchronization, advanced analytics, and a cinema-inspired UI.
 

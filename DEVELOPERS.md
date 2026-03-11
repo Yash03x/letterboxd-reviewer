@@ -1,6 +1,6 @@
-# Letterboxd Reviewer Pro - Developer Documentation
+# Spyboxd - Developer Documentation
 
-This document provides a comprehensive guide for developers working on the Letterboxd Reviewer Pro project. It covers the architecture, backend, frontend, data flow, and development workflow.
+This document provides a comprehensive guide for developers working on Spyboxd.
 
 ## 1. Architecture Overview
 

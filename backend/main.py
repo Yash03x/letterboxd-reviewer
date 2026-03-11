@@ -1,3 +1,6 @@
+from dotenv import load_dotenv
+load_dotenv()  # loads backend/.env before anything else reads os.environ
+
 from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
@@ -47,15 +50,19 @@ class ScrapingJobResponse(BaseModel):
     error_message: Optional[str]
 
 app = FastAPI(
-    title="Letterboxd Reviewer API v2.0",
-    description="Advanced Letterboxd profile analysis with persistent database storage",
+    title="Spyboxd API",
+    description="Analytics and insights for Letterboxd profiles",
     version="2.0.0"
 )
 
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # React dev server
+    allow_origins=[
+        "http://localhost:3000",   # Next.js dev server
+        "https://spyboxd.com",     # Cloudflare Pages production
+        "https://www.spyboxd.com",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -65,7 +72,7 @@ app.add_middleware(
 @app.on_event("startup")
 async def startup_event():
     init_db()
-    print("🎬 Letterboxd Reviewer API v2.0 started successfully!")
+    print("🎬 Spyboxd API started successfully!")
 
 # Keep analyzer for processing
 analyzer = UnifiedLetterboxdAnalyzer()

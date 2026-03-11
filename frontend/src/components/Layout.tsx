@@ -3,15 +3,14 @@
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { UserButton, SignInButton, useAuth } from '@clerk/nextjs';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   HomeIcon, 
   FilmIcon, 
   ChartBarIcon, 
-  Cog6ToothIcon,
   UserGroupIcon,
   PlayIcon,
-  SparklesIcon
 } from '@heroicons/react/24/outline';
 import {
   HomeIcon as HomeIconSolid,
@@ -25,6 +24,7 @@ interface LayoutProps {
 
 const Layout: React.FC<LayoutProps> = ({ children }) => {
   const pathname = usePathname();
+  const { isSignedIn } = useAuth();
   const [isLoaded, setIsLoaded] = useState(false);
   const [currentTime, setCurrentTime] = useState(new Date());
 
@@ -105,10 +105,10 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             </div>
             <div>
               <h1 className="text-xl font-bold text-white text-glow">
-                Letterboxd
+                Spyboxd
               </h1>
               <p className="text-sm text-white/60 font-medium">
-                Reviewer Pro
+                User Analytics
               </p>
             </div>
           </motion.div>
@@ -198,26 +198,6 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
               );
             })}
           </div>
-
-          {/* Footer */}
-          <motion.div 
-            className="pt-6 mt-6 border-t border-white/10"
-            initial={{ y: 20, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            transition={{ delay: 0.8 }}
-          >
-            <div className="flex items-center space-x-3 p-3 rounded-xl bg-white/5 border border-white/10">
-              <SparklesIcon className="w-5 h-5 text-cinema-400" />
-              <div>
-                <div className="text-sm font-medium text-white/90">
-                  Enhanced Mode
-                </div>
-                <div className="text-xs text-white/60">
-                  Real-time analytics active
-                </div>
-              </div>
-            </div>
-          </motion.div>
         </div>
       </motion.nav>
 
@@ -246,22 +226,31 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                 animate={{ x: 0, opacity: 1 }}
                 transition={{ delay: 0.6 }}
               >
-                {navigationItems.find(item => isActive(item.path))?.description || 'Welcome to Letterboxd Reviewer Pro'}
+                {navigationItems.find(item => isActive(item.path))?.description || 'Welcome to Spyboxd'}
               </motion.p>
             </div>
             
             <motion.div 
-              className="flex items-center space-x-4"
+              className="flex items-center space-x-3"
               initial={{ x: 20, opacity: 0 }}
               animate={{ x: 0, opacity: 1 }}
               transition={{ delay: 0.7 }}
             >
-              <button className="btn-ghost">
-                <Cog6ToothIcon className="w-5 h-5" />
-              </button>
-              <button className="btn-ghost">
-                <UserGroupIcon className="w-5 h-5" />
-              </button>
+              {isSignedIn ? (
+                <UserButton
+                  appearance={{
+                    elements: {
+                      avatarBox: 'w-9 h-9 ring-2 ring-cinema-500/40 hover:ring-cinema-400/70 transition-all',
+                    },
+                  }}
+                />
+              ) : (
+                <SignInButton mode="modal">
+                  <button className="px-4 py-1.5 rounded-lg text-sm font-medium bg-cinema-500 hover:bg-cinema-600 text-white transition-colors">
+                    Sign in
+                  </button>
+                </SignInButton>
+              )}
             </motion.div>
           </div>
         </motion.header>

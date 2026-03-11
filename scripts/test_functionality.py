@@ -95,7 +95,7 @@ def test_data_directories():
     return all_exist
 
 def main():
-    print("🎬 Letterboxd Reviewer - Functionality Test")
+    print("🎬 Spyboxd - Functionality Test")
     print("=" * 50)
     
     tests = [

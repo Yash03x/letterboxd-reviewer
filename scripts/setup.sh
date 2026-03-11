@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Project Setup Script
-echo "🎬 Setting up Letterboxd Reviewer..."
+echo "🎬 Setting up Spyboxd..."
 
 # Make scripts executable
 chmod +x scripts/*.sh

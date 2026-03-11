@@ -4,6 +4,10 @@ uvicorn[standard]>=0.23.0
 sqlalchemy>=2.0.0
 python-multipart>=0.0.6
 
+# Auth — Clerk JWT verification
+PyJWT[crypto]>=2.8.0
+python-dotenv>=1.0.0
+
 # Data Processing
 pandas>=1.5.0
 numpy>=1.21.0

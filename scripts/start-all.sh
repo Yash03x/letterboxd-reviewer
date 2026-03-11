@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Start Both Backend and Frontend Script
-echo "🎬 Starting Letterboxd Reviewer (Full Stack)..."
+echo "🎬 Starting Spyboxd (Full Stack)..."
 
 # Function to cleanup background processes on exit
 cleanup() {

@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Start Backend Server Script
-echo "🎬 Starting Letterboxd Reviewer Backend..."
+echo "🎬 Starting Spyboxd Backend..."
 
 # Navigate to backend directory
 cd "$(dirname "$0")/../backend"
