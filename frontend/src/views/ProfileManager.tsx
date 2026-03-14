@@ -28,7 +28,7 @@ interface ScrapingJob {
   progress: string;
   progressPercentage?: number;
   jobId?: number;
-  startTime?: string | null;
+  startTime?: string;
 }
 
 interface ScrapeProgressEvent {
@@ -193,7 +193,7 @@ const ProfileManager: React.FC = () => {
             progress: job.progress_message || 'Processing...',
             progressPercentage: job.progress_percentage ?? 0,
             jobId: job.id,
-            startTime: job.queued_at,
+            startTime: job.queued_at ?? undefined,
           },
         ]);
         subscribeToProgress(job.username, job.id);
