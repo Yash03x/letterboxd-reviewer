@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios, { AxiosHeaders } from 'axios';
 
 // Create axios instance with base configuration
 const api = axios.create({
@@ -6,6 +6,37 @@ const api = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
+});
+
+type TokenProvider = () => Promise<string | null>;
+
+let tokenProvider: TokenProvider | null = null;
+
+export function setApiTokenProvider(provider: TokenProvider | null) {
+  tokenProvider = provider;
+}
+
+api.interceptors.request.use(async (config) => {
+  const headers = AxiosHeaders.from(config.headers);
+  if (!tokenProvider) {
+    headers.delete('Authorization');
+    config.headers = headers;
+    return config;
+  }
+
+  try {
+    const token = await tokenProvider();
+    if (token) {
+      headers.set('Authorization', `Bearer ${token}`);
+    } else {
+      headers.delete('Authorization');
+    }
+  } catch (error) {
+    console.error('Failed to fetch auth token for API request:', error);
+  }
+
+  config.headers = headers;
+  return config;
 });
 
 // Types for API responses
@@ -47,9 +78,48 @@ export interface ScrapingStatus {
   end_time?: string;
 }
 
+export interface ScrapeStartResponse {
+  message: string;
+  job_id: number;
+  task_id: string;
+  status: 'queued' | 'in_progress' | 'completed' | 'failed' | 'error' | 'pending';
+  check_status_url: string;
+}
+
 export interface AvailableProfile {
   username: string;
   scraped_at: string;
+}
+
+export interface ScrapeQueueJob {
+  id: number;
+  username: string;
+  profile_id: number;
+  status: 'pending' | 'queued' | 'in_progress' | 'completed' | 'failed' | 'error';
+  progress_message?: string | null;
+  progress_percentage?: number | null;
+  queued_at?: string | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+  error_message?: string | null;
+  retry_count?: number | null;
+  job_type?: string | null;
+  age_seconds?: number | null;
+  is_stale: boolean;
+}
+
+export interface ScrapeJobsSnapshot {
+  jobs: ScrapeQueueJob[];
+  counts: {
+    total: number;
+    queued: number;
+    in_progress: number;
+    completed: number;
+    failed: number;
+    stale: number;
+  };
+  stale_threshold_minutes: number;
+  generated_at: string;
 }
 
 // Profile API endpoints
@@ -96,8 +166,14 @@ export const profileApi = {
 
 // Scraper API endpoints
 export const scraperApi = {
+  getProgressStreamUrl: (jobId: number): string => {
+    const rawBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000';
+    const normalizedBaseUrl = rawBaseUrl.endsWith('/') ? rawBaseUrl.slice(0, -1) : rawBaseUrl;
+    return `${normalizedBaseUrl}/scrape/progress/${jobId}/stream`;
+  },
+
   // Start scraping a profile
-  scrapeProfile: async (username: string): Promise<{ message: string }> => {
+  scrapeProfile: async (username: string): Promise<ScrapeStartResponse> => {
     const response = await api.post(`/scrape/profile/${username}`);
     return response.data;
   },
@@ -111,6 +187,34 @@ export const scraperApi = {
   // Get available scraped profiles
   getAvailable: async (): Promise<{ available_profiles: AvailableProfile[] }> => {
     const response = await api.get('/scrape/available');
+    return response.data;
+  },
+
+  // List recent scrape jobs (queue monitor)
+  getJobs: async (limit = 50, staleOnly = false): Promise<ScrapeJobsSnapshot> => {
+    const response = await api.get('/scrape/jobs', {
+      params: { limit, stale_only: staleOnly },
+    });
+    return response.data;
+  },
+
+  // Retry a completed/failed job as a fresh queued job
+  retryJob: async (jobId: number): Promise<{ message: string; job: ScrapeQueueJob; task_id: string }> => {
+    const response = await api.post(`/scrape/jobs/${jobId}/retry`);
+    return response.data;
+  },
+
+  // Cancel queued/in-progress job from UI (marks as failed)
+  cancelJob: async (jobId: number): Promise<{ message: string; job: ScrapeQueueJob | null }> => {
+    const response = await api.post(`/scrape/jobs/${jobId}/cancel`);
+    return response.data;
+  },
+
+  // Bulk-reset stale jobs
+  resetStaleJobs: async (staleMinutes?: number): Promise<{ message: string; reset_count: number; jobs: ScrapeQueueJob[] }> => {
+    const response = await api.post('/scrape/jobs/reset-stale', null, {
+      params: staleMinutes ? { stale_minutes: staleMinutes } : undefined,
+    });
     return response.data;
   },
 

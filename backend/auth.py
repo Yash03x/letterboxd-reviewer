@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Clerk JWT verification dependency for FastAPI.
 
@@ -11,34 +13,50 @@ Usage:
 
 import os
 from functools import lru_cache
+from pathlib import Path
+from typing import Optional
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dataclasses import dataclass
 import jwt
-from jwt import PyJWKClient
+from jwt import PyJWKClient, PyJWKClientError
+from dotenv import load_dotenv
 
-CLERK_JWKS_URL = os.environ.get(
-    "CLERK_JWKS_URL",
-    # Fallback: set CLERK_FRONTEND_API in env, e.g. https://your-clerk-domain.clerk.accounts.dev
-    f"{os.environ.get('CLERK_FRONTEND_API', '')}/.well-known/jwks.json",
-)
+REPO_ROOT = Path(__file__).resolve().parents[1]
+BACKEND_DIR = REPO_ROOT / "backend"
+
+# Ensure auth can resolve env vars even if imported before main.py loads dotenv.
+load_dotenv(REPO_ROOT / ".env")
+load_dotenv(BACKEND_DIR / ".env", override=False)
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
 
-@lru_cache(maxsize=1)
-def _get_jwks_client() -> PyJWKClient:
-    return PyJWKClient(CLERK_JWKS_URL, cache_keys=True)
+def _resolve_clerk_jwks_url() -> str:
+    explicit = os.environ.get("CLERK_JWKS_URL", "").strip()
+    if explicit:
+        return explicit
+
+    frontend_api = os.environ.get("CLERK_FRONTEND_API", "").strip().rstrip("/")
+    if frontend_api:
+        return f"{frontend_api}/.well-known/jwks.json"
+
+    return ""
+
+
+@lru_cache(maxsize=4)
+def _get_jwks_client(jwks_url: str) -> PyJWKClient:
+    return PyJWKClient(jwks_url, cache_keys=True)
 
 
 @dataclass
 class ClerkUser:
     user_id: str
-    session_id: str
+    session_id: Optional[str]
 
 
 def get_current_user(
-    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
 ) -> ClerkUser:
     """Extract and verify Clerk JWT from Authorization: Bearer <token> header."""
     if credentials is None:
@@ -49,19 +67,31 @@ def get_current_user(
         )
 
     token = credentials.credentials
+    clerk_jwks_url = _resolve_clerk_jwks_url()
+    if not clerk_jwks_url or clerk_jwks_url.startswith("/.well-known"):
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Clerk JWKS URL is not configured on the API",
+        )
+
     try:
-        jwks_client = _get_jwks_client()
+        jwks_client = _get_jwks_client(clerk_jwks_url)
         signing_key = jwks_client.get_signing_key_from_jwt(token)
         payload = jwt.decode(
             token,
             signing_key.key,
             algorithms=["RS256"],
-            options={"verify_exp": True},
+            options={"verify_exp": True, "verify_aud": False},
         )
     except jwt.ExpiredSignatureError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token has expired",
+        )
+    except PyJWKClientError as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Token signature verification failed: {e}",
         )
     except jwt.InvalidTokenError as e:
         raise HTTPException(
@@ -81,8 +111,8 @@ def get_current_user(
 
 
 def get_optional_user(
-    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
-) -> ClerkUser | None:
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
+) -> Optional[ClerkUser]:
     """Same as get_current_user but returns None instead of raising for public routes."""
     if credentials is None:
         return None

@@ -15,10 +15,5 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # A better approach is to let the user specify it in the UI
 DEFAULT_LOCAL_DATA_PATH = os.path.expanduser("~/Downloads/letterboxd")
 
-# LLM settings
-OLLAMA_URL = "http://localhost:11434/api/generate"
-LM_STUDIO_URL = "http://localhost:1234/v1/chat/completions"
-OLLAMA_API_TAGS_URL = "http://localhost:11434/api/tags"
-
 # Recommendation settings
 RECOMMENDATIONS_FILE_PATH = os.path.join(BASE_DIR, "core", "recommendations.json")

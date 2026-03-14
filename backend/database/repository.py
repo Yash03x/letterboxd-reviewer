@@ -1,9 +1,36 @@
+import math
 from sqlalchemy.orm import Session
-from sqlalchemy import desc, func, and_, or_, String
+from sqlalchemy import desc, func, and_, or_, String, extract
 from .models import Profile, Rating, Review, MovieList, ScrapingJob
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
-import json
+
+
+def _format_month_bucket(year: int, month: int) -> str:
+    return f"{int(year):04d}-{int(month):02d}"
+
+
+RATING_MIN = 0.0
+RATING_MAX = 5.0
+
+
+def _coerce_finite_float(value: Any) -> Optional[float]:
+    if value is None:
+        return None
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(numeric):
+        return None
+    return numeric
+
+
+def _safe_round(value: Any, digits: int = 2) -> Optional[float]:
+    numeric = _coerce_finite_float(value)
+    if numeric is None:
+        return None
+    return round(numeric, digits)
 
 class ProfileRepository:
     def __init__(self, db: Session):
@@ -95,7 +122,9 @@ class RatingRepository:
             func.count(Rating.id).label('count')
         ).filter(
             Rating.profile_id == profile_id,
-            Rating.rating.isnot(None)
+            Rating.rating.isnot(None),
+            Rating.rating >= RATING_MIN,
+            Rating.rating <= RATING_MAX,
         ).group_by(Rating.rating).all()
         
         return {str(rating): count for rating, count in results}
@@ -103,25 +132,30 @@ class RatingRepository:
     def get_monthly_watch_stats(self, profile_id: int, months: int = 12) -> List[Dict]:
         """Get monthly watching statistics"""
         cutoff_date = datetime.utcnow().date() - timedelta(days=months * 30)
-        
+        year_bucket = extract('year', Rating.watched_date)
+        month_bucket = extract('month', Rating.watched_date)
+
         results = self.db.query(
-            func.strftime('%Y-%m', Rating.watched_date).label('month'),
+            year_bucket.label('year'),
+            month_bucket.label('month'),
             func.count(Rating.id).label('count'),
             func.avg(Rating.rating).label('avg_rating')
         ).filter(
             Rating.profile_id == profile_id,
-            Rating.watched_date >= cutoff_date
+            Rating.watched_date >= cutoff_date,
+            Rating.rating.is_(None) | and_(Rating.rating >= RATING_MIN, Rating.rating <= RATING_MAX),
         ).group_by(
-            func.strftime('%Y-%m', Rating.watched_date)
-        ).order_by('month').all()
+            year_bucket,
+            month_bucket
+        ).order_by(year_bucket, month_bucket).all()
         
         return [
             {
-                'month': month,
+                'month': _format_month_bucket(year, month),
                 'movies_watched': count,
-                'average_rating': round(avg_rating, 2) if avg_rating else None
+                'average_rating': _safe_round(avg_rating, 2)
             }
-            for month, count, avg_rating in results
+            for year, month, count, avg_rating in results
         ]
 
     def get_global_rating_distribution(self) -> Dict[str, int]:
@@ -130,7 +164,9 @@ class RatingRepository:
             Rating.rating,
             func.count(Rating.id).label('count')
         ).filter(
-            Rating.rating.isnot(None)
+            Rating.rating.isnot(None),
+            Rating.rating >= RATING_MIN,
+            Rating.rating <= RATING_MAX,
         ).group_by(Rating.rating).all()
 
         return {str(rating): count for rating, count in results}
@@ -138,25 +174,30 @@ class RatingRepository:
     def get_global_monthly_activity(self) -> List[Dict]:
         """Get monthly activity data across all profiles"""
         cutoff_date = datetime.now().date() - timedelta(days=365)
-        
+        year_bucket = extract('year', Rating.watched_date)
+        month_bucket = extract('month', Rating.watched_date)
+
         results = self.db.query(
-            func.strftime('%Y-%m', Rating.watched_date).label('month'),
+            year_bucket.label('year'),
+            month_bucket.label('month'),
             func.count(Rating.id).label('movies_watched'),
             func.avg(Rating.rating).label('avg_rating')
         ).filter(
             Rating.watched_date >= cutoff_date,
-            Rating.watched_date.isnot(None)
+            Rating.watched_date.isnot(None),
+            Rating.rating.is_(None) | and_(Rating.rating >= RATING_MIN, Rating.rating <= RATING_MAX),
         ).group_by(
-            func.strftime('%Y-%m', Rating.watched_date)
-        ).order_by('month').all()
+            year_bucket,
+            month_bucket
+        ).order_by(year_bucket, month_bucket).all()
         
         return [
             {
-                'month': month,
+                'month': _format_month_bucket(year, month),
                 'movies_watched': count,
-                'average_rating': round(avg_rating, 2) if avg_rating else None
+                'average_rating': _safe_round(avg_rating, 2)
             }
-            for month, count, avg_rating in results
+            for year, month, count, avg_rating in results
         ]
 
 class ReviewRepository:
@@ -227,11 +268,46 @@ class ScrapingJobRepository:
         return self.db.query(ScrapingJob).filter(
             ScrapingJob.status.in_(["queued", "in_progress"])
         ).order_by(ScrapingJob.queued_at).all()
+
+    def get_job_by_id(self, job_id: int) -> Optional[ScrapingJob]:
+        return (
+            self.db.query(ScrapingJob)
+            .filter(ScrapingJob.id == job_id)
+            .populate_existing()
+            .first()
+        )
     
     def get_job_by_profile(self, profile_id: int) -> Optional[ScrapingJob]:
         return self.db.query(ScrapingJob).filter(
             ScrapingJob.profile_id == profile_id
         ).order_by(ScrapingJob.queued_at.desc()).first()
+
+    def get_jobs_by_profile(self, profile_id: int, limit: int = 20) -> List[ScrapingJob]:
+        return (
+            self.db.query(ScrapingJob)
+            .filter(ScrapingJob.profile_id == profile_id)
+            .order_by(ScrapingJob.queued_at.desc())
+            .limit(limit)
+            .all()
+        )
+
+    def get_recent_jobs_with_profile(self, limit: int = 50):
+        return (
+            self.db.query(ScrapingJob, Profile.username)
+            .join(Profile, Profile.id == ScrapingJob.profile_id)
+            .order_by(ScrapingJob.queued_at.desc())
+            .limit(limit)
+            .all()
+        )
+
+    def get_active_jobs_for_profile(self, profile_id: int, exclude_job_id: Optional[int] = None) -> List[ScrapingJob]:
+        query = self.db.query(ScrapingJob).filter(
+            ScrapingJob.profile_id == profile_id,
+            ScrapingJob.status.in_(["queued", "in_progress"]),
+        )
+        if exclude_job_id is not None:
+            query = query.filter(ScrapingJob.id != exclude_job_id)
+        return query.order_by(ScrapingJob.queued_at.desc()).all()
 
 class AnalyticsRepository:
     def __init__(self, db: Session):
@@ -261,7 +337,9 @@ class AnalyticsRepository:
         
         # Global average rating across all ratings
         global_avg_rating = self.db.query(func.avg(Rating.rating)).filter(
-            Rating.rating.isnot(None)
+            Rating.rating.isnot(None),
+            Rating.rating >= RATING_MIN,
+            Rating.rating <= RATING_MAX,
         ).scalar() or 0.0
         
         return {
@@ -269,7 +347,7 @@ class AnalyticsRepository:
             "total_movies_tracked": total_unique_movies,
             "total_reviews": total_reviews,
             "active_scraping_jobs": active_jobs,
-            "global_avg_rating": round(float(global_avg_rating), 2),
+            "global_avg_rating": _safe_round(global_avg_rating, 2) or 0.0,
             "last_updated": datetime.utcnow().isoformat()
         }
     
@@ -281,7 +359,9 @@ class AnalyticsRepository:
             func.avg(Rating.rating).label('avg_rating'),
             func.count(Rating.id).label('rating_count')
         ).filter(
-            Rating.rating.isnot(None)
+            Rating.rating.isnot(None),
+            Rating.rating >= RATING_MIN,
+            Rating.rating <= RATING_MAX,
         ).group_by(
             Rating.movie_title, Rating.movie_year
         ).having(
@@ -290,12 +370,17 @@ class AnalyticsRepository:
             desc('avg_rating')
         ).limit(limit).all()
         
-        return [
-            {
-                'title': title,
-                'year': year,
-                'average_rating': round(avg_rating, 2),
-                'total_ratings': count
-            }
-            for title, year, avg_rating, count in results
-        ]
+        movies: List[Dict[str, Any]] = []
+        for title, year, avg_rating, count in results:
+            safe_avg = _safe_round(avg_rating, 2)
+            if safe_avg is None:
+                continue
+            movies.append(
+                {
+                    "title": title,
+                    "year": year,
+                    "average_rating": safe_avg,
+                    "total_ratings": count,
+                }
+            )
+        return movies

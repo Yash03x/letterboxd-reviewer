@@ -1,9 +1,8 @@
 import json
-from typing import Protocol, List, Dict
-from typing import TYPE_CHECKING
-if TYPE_CHECKING:
-    from core.analyzer import ProfileData
+from typing import Any, Protocol, List, Dict
 from config import settings
+
+ProfileData = Any
 
 class RecommendationEngine(Protocol):
     """Protocol for a recommendation engine."""

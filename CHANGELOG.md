@@ -38,7 +38,7 @@
 - Multi-profile comparison using Streamlit
 - Basic file upload functionality
 - Statistical analysis with matplotlib/seaborn
-- LLM integration with Ollama and OpenAI
+- Optional AI-assisted insight generation
 - Simple web interface for profile analysis
 
 ### Limitations

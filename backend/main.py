@@ -1,32 +1,41 @@
-from dotenv import load_dotenv
-load_dotenv()  # loads backend/.env before anything else reads os.environ
-
-from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Depends
-from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.orm import Session
-from core.analyzer import UnifiedLetterboxdAnalyzer
-from scraper import EnhancedLetterboxdScraper
-from database.connection import get_db, init_db
-from database.models import Profile, Rating, Review, ScrapingJob
-from database.repository import (
-    ProfileRepository, RatingRepository, ReviewRepository, 
-    ScrapingJobRepository, AnalyticsRepository
-)
-import tempfile
-import zipfile
-import os
-import shutil
 import asyncio
 import json
-from typing import Optional, List, Dict, Any
+import math
+import os
+import shutil
+import tempfile
+import zipfile
 from datetime import datetime, timedelta
-import pandas as pd
-from pydantic import BaseModel
+from typing import List, Optional
 
-# Get base directory for absolute paths
+from dotenv import load_dotenv
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from auth import ClerkUser, get_current_user
+from celery_app import celery_app
+from database.connection import get_db, init_db
+from database.repository import (
+    ProfileRepository, RatingRepository, ReviewRepository,
+    ScrapingJobRepository, AnalyticsRepository
+)
+from pydantic import BaseModel
+from services.ingestion import unified_data_loader
+from services.profile_loader import load_profile_data
+from sqlalchemy.orm import Session
+from tasks.scrape import scrape_profile_task
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.dirname(BASE_DIR)
+
+# Support both repo-level .env and legacy backend/.env.
+load_dotenv(os.path.join(REPO_ROOT, ".env"))
+load_dotenv(os.path.join(BASE_DIR, ".env"), override=False)
 DATA_DIR = os.path.join(BASE_DIR, "..", "data")
 SCRAPED_DATA_DIR = os.path.join(DATA_DIR, "scraped")
+SSE_PROGRESS_TIMEOUT_SECONDS = int(os.getenv("SSE_PROGRESS_TIMEOUT_SECONDS", "900"))
+SSE_PROGRESS_POLL_INTERVAL_SECONDS = float(os.getenv("SSE_PROGRESS_POLL_INTERVAL_SECONDS", "1.5"))
+SCRAPE_STALE_JOB_MINUTES = int(os.getenv("SCRAPE_STALE_JOB_MINUTES", "20"))
 
 # Pydantic models for request/response
 class ProfileCreate(BaseModel):
@@ -49,6 +58,109 @@ class ScrapingJobResponse(BaseModel):
     started_at: Optional[datetime]
     error_message: Optional[str]
 
+
+def _get_cors_origins() -> List[str]:
+    configured = os.getenv("CORS_ALLOWED_ORIGINS", "").strip()
+    if configured:
+        return [origin.strip() for origin in configured.split(",") if origin.strip()]
+
+    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+    defaults = [
+        frontend_url,
+        "http://localhost:3000",
+        "https://spyboxd.com",
+        "https://www.spyboxd.com",
+    ]
+
+    deduped: List[str] = []
+    seen = set()
+    for origin in defaults:
+        if origin and origin not in seen:
+            deduped.append(origin)
+            seen.add(origin)
+    return deduped
+
+
+def _job_reference_time(job) -> Optional[datetime]:
+    return job.started_at or job.queued_at
+
+
+def _seconds_since(timestamp: Optional[datetime]) -> Optional[int]:
+    if not timestamp:
+        return None
+
+    now = datetime.now(timestamp.tzinfo) if timestamp.tzinfo else datetime.utcnow()
+    delta = now - timestamp
+    return max(0, int(delta.total_seconds()))
+
+
+def _is_job_stale(job, stale_minutes: int) -> bool:
+    if job.status not in ["queued", "in_progress"]:
+        return False
+    age_seconds = _seconds_since(_job_reference_time(job))
+    if age_seconds is None:
+        return False
+    return age_seconds >= stale_minutes * 60
+
+
+def _safe_json_float(value, default: Optional[float] = None) -> Optional[float]:
+    if value is None:
+        return default
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return default
+    if not math.isfinite(numeric):
+        return default
+    return numeric
+
+
+def _format_enqueue_error(exc: Exception) -> str:
+    raw_message = str(exc).strip()
+    if "Retry limit exceeded while trying to reconnect to the Celery redis result store backend" in raw_message:
+        return "Celery/Redis connection is stale. Restart API and Celery worker after confirming Redis is running."
+    if raw_message:
+        return raw_message
+    return exc.__class__.__name__
+
+
+def _enqueue_scrape_task(job_id: int, username: str):
+    """
+    Enqueue scraping task and try one connection reset when Celery backend got stale.
+    This commonly happens after local Redis/Celery restarts during development.
+    """
+    try:
+        return scrape_profile_task.apply_async(args=[job_id, username])
+    except Exception as exc:
+        if "Retry limit exceeded while trying to reconnect to the Celery redis result store backend" not in str(exc):
+            raise
+        try:
+            celery_app.close()
+        except Exception:
+            pass
+        return scrape_profile_task.apply_async(args=[job_id, username])
+
+
+def _serialize_scrape_job(job, username: str, stale_minutes: int) -> dict:
+    age_seconds = _seconds_since(_job_reference_time(job))
+    return {
+        "id": job.id,
+        "username": username,
+        "profile_id": job.profile_id,
+        "status": job.status,
+        "progress_message": job.progress_message,
+        "progress_percentage": job.progress_percentage,
+        "queued_at": job.queued_at.isoformat() if job.queued_at else None,
+        "started_at": job.started_at.isoformat() if job.started_at else None,
+        "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+        "error_message": job.error_message,
+        "retry_count": job.retry_count,
+        "job_type": job.job_type,
+        "age_seconds": age_seconds,
+        "is_stale": _is_job_stale(job, stale_minutes),
+    }
+
+
 app = FastAPI(
     title="Spyboxd API",
     description="Analytics and insights for Letterboxd profiles",
@@ -58,11 +170,7 @@ app = FastAPI(
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",   # Next.js dev server
-        "https://spyboxd.com",     # Cloudflare Pages production
-        "https://www.spyboxd.com",
-    ],
+    allow_origins=_get_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -74,221 +182,46 @@ async def startup_event():
     init_db()
     print("🎬 Spyboxd API started successfully!")
 
-# Keep analyzer for processing
-analyzer = UnifiedLetterboxdAnalyzer()
+@app.get("/health")
+async def health_check():
+    return {"status": "ok", "timestamp": datetime.utcnow().isoformat()}
 
-def unified_data_loader(analyzer_profile, profile_id: int, db: Session):
+
+@app.get("/public/profile/{username}")
+async def get_public_profile(username: str, db: Session = Depends(get_db)):
     """
-    Unified function to load all profile data with proper deduplication.
-    This prevents duplicates regardless of data source (upload vs scrape).
+    Public profile snapshot used by share pages/OG images.
+    Only exposes completed, active profiles.
     """
+    profile_repo = ProfileRepository(db)
     rating_repo = RatingRepository(db)
-    review_repo = ReviewRepository(db)
-    
-    # Clear existing data first to ensure clean slate
-    print(f"Clearing existing data for profile {profile_id}")
-    rating_repo.delete_ratings_by_profile(profile_id)
-    review_repo.delete_reviews_by_profile(profile_id)
-    
-    # Collect all unique movies from all sources to prevent duplicates
-    all_movies = {}  # movie_key -> movie_data mapping
-    
-    # Priority 1: Comprehensive films dataset (most complete)
-    if hasattr(analyzer_profile, 'all_films') and not analyzer_profile.all_films.empty:
-        print(f"Processing comprehensive films dataset: {len(analyzer_profile.all_films)} films")
-        print(f"Comprehensive films columns: {list(analyzer_profile.all_films.columns)}")
-        print(f"First few rows: {analyzer_profile.all_films.head(3).to_dict('records')}")
-        for _, row in analyzer_profile.all_films.iterrows():
-            movie_title = str(row.get('Name', row.get('Title', '')))
-            movie_year = row.get('Year', None)
-            if movie_year and str(movie_year).isdigit():
-                movie_year = int(movie_year)
-            else:
-                movie_year = None
-            
-            movie_key = (movie_title, movie_year)
-            
-            # Parse watched_date
-            watched_date = None
-            watched_date_raw = row.get('Watched Date', row.get('Date', None))
-            if watched_date_raw:
-                try:
-                    parsed_date = pd.to_datetime(watched_date_raw, errors='coerce')
-                    if not pd.isna(parsed_date):
-                        watched_date = parsed_date.date()
-                except:
-                    watched_date = None
-                    
-            all_movies[movie_key] = {
-                'profile_id': profile_id,
-                'movie_title': movie_title,
-                'movie_year': movie_year,
-                'letterboxd_id': str(row.get('Film_ID', '')) if row.get('Film_ID') else None,
-                'rating': float(row.get('Rating')) if row.get('Rating') else None,
-                'watched_date': watched_date,
-                'is_rewatch': _parse_rewatch_status(row.get('Rewatch', row.get('Is_Rewatch', False))),
-                'is_liked': False,  # Will be set by likes data below
-                'film_slug': str(row.get('Slug', '')) if row.get('Slug') else None,
-                'poster_url': str(row.get('Poster_URL', '')) if row.get('Poster_URL') else None
-            }
-    
-    # Merge diary data for watched dates (if available)
-    if hasattr(analyzer_profile, 'diary') and not analyzer_profile.diary.empty:
-        print(f"Merging diary data for watched dates: {len(analyzer_profile.diary)} entries")
-        diary_dates_added = 0
-        for _, row in analyzer_profile.diary.iterrows():
-            movie_title = str(row.get('Name', ''))
-            movie_year = row.get('Year', None)
-            if movie_year and str(movie_year).isdigit():
-                movie_year = int(movie_year)
-            else:
-                movie_year = None
-                
-            movie_key = (movie_title, movie_year)
-            
-            # Parse diary watched date
-            watched_date = None
-            watched_date_raw = row.get('Watched Date', None)
-            if watched_date_raw and str(watched_date_raw).strip():
-                try:
-                    # Handle formats like "Aug 2025 28" 
-                    parsed_date = pd.to_datetime(watched_date_raw, errors='coerce')
-                    if not pd.isna(parsed_date):
-                        watched_date = parsed_date.date()
-                except:
-                    watched_date = None
-            
-            # If movie exists in all_movies and we have a valid date, update it
-            if movie_key in all_movies and watched_date:
-                if not all_movies[movie_key]['watched_date']:  # Only update if no date exists
-                    all_movies[movie_key]['watched_date'] = watched_date
-                    diary_dates_added += 1
-                
-                # Also update rewatch status from diary
-                is_rewatch = _parse_rewatch_status(row.get('Is_Rewatch', False))
-                if is_rewatch:
-                    all_movies[movie_key]['is_rewatch'] = True
-        
-        print(f"Added {diary_dates_added} watched dates from diary")
-    
-    # Priority 2: Ratings dataset (fallback if no comprehensive data)
-    elif hasattr(analyzer_profile, 'ratings') and not analyzer_profile.ratings.empty:
-        print(f"Processing ratings dataset: {len(analyzer_profile.ratings)} films")
-        for _, row in analyzer_profile.ratings.iterrows():
-            movie_title = str(row.get('Name', ''))
-            movie_year = row.get('Year', None)
-            if movie_year and str(movie_year).isdigit():
-                movie_year = int(movie_year)
-            else:
-                movie_year = None
-                
-            movie_key = (movie_title, movie_year)
-            
-            all_movies[movie_key] = {
-                'profile_id': profile_id,
-                'movie_title': movie_title,
-                'movie_year': movie_year,
-                'letterboxd_id': str(row.get('Film_ID', '')) if row.get('Film_ID') else None,
-                'rating': float(row.get('Rating')) if row.get('Rating') else None,
-                'watched_date': parse_date_for_db(row.get('Watched Date', None)),
-                'is_rewatch': _parse_rewatch_status(row.get('Rewatch', False)),
-                'is_liked': False,  # Will be set by likes data below
-                'film_slug': str(row.get('Slug', '')) if row.get('Slug') else None,
-                'poster_url': str(row.get('Poster_URL', '')) if row.get('Poster_URL') else None
-            }
-    
-    # Process likes data - only mark existing movies as liked (no new movies added)
-    if hasattr(analyzer_profile, 'likes') and not analyzer_profile.likes.empty:
-        print(f"Processing likes data: {len(analyzer_profile.likes)} films")
-        likes_marked = 0
-        
-        for _, row in analyzer_profile.likes.iterrows():
-            movie_title = str(row.get('Name', row.get('Title', '')))
-            movie_year = row.get('Year', None)
-            if movie_year and str(movie_year).isdigit():
-                movie_year = int(movie_year)
-            else:
-                movie_year = None
-                
-            movie_key = (movie_title, movie_year)
-            
-            if movie_key in all_movies:
-                # Movie exists, mark as liked
-                all_movies[movie_key]['is_liked'] = True
-                likes_marked += 1
-        
-        print(f"Likes processing: {likes_marked} existing movies marked as liked")
-    
-    # Bulk insert all ratings with error handling for duplicates
-    if all_movies:
-        ratings_data = list(all_movies.values())
-        try:
-            rating_repo.bulk_create_ratings(ratings_data)
-            print(f"Inserted {len(ratings_data)} unique movies (no duplicates)")
-        except Exception as e:
-            # If bulk insert fails due to constraints, try individual inserts
-            print(f"Bulk insert failed ({str(e)}), trying individual inserts...")
-            inserted_count = 0
-            for rating_data in ratings_data:
-                try:
-                    rating_repo.create_rating(**rating_data)
-                    inserted_count += 1
-                except Exception:
-                    # Skip duplicates silently
-                    pass
-            print(f"Inserted {inserted_count} out of {len(ratings_data)} movies (skipped duplicates)")
-    
-    # Process reviews data
-    if hasattr(analyzer_profile, 'reviews') and not analyzer_profile.reviews.empty:
-        print(f"Processing reviews data: {len(analyzer_profile.reviews)} reviews")
-        reviews_data = []
-        for _, row in analyzer_profile.reviews.iterrows():
-            reviews_data.append({
-                'profile_id': profile_id,
-                'movie_title': str(row.get('Name', row.get('Title', ''))),
-                'movie_year': int(row.get('Year')) if row.get('Year') and str(row.get('Year')).isdigit() else None,
-                'letterboxd_id': str(row.get('Film_ID', '')) if row.get('Film_ID') else None,
-                'review_text': str(row.get('Review', '')),
-                'rating': float(row.get('Rating')) if row.get('Rating') else None,
-                'published_date': parse_date_for_db(row.get('Review_Date', row.get('Date', None))),
-                'likes_count': int(row.get('Review_Likes', 0)) if row.get('Review_Likes') else 0,
-                'comments_count': int(row.get('Review_Comments', 0)) if row.get('Review_Comments') else 0,
-                'contains_spoilers': bool(row.get('Contains Spoilers', False))
-            })
-        
-        if reviews_data:
-            review_repo.bulk_create_reviews(reviews_data)
-            print(f"Inserted {len(reviews_data)} reviews")
-    
-    return len(all_movies)
 
-def parse_date_for_db(date_value):
-    """Parse date string/object to Python date object for database storage"""
-    if not date_value:
-        return None
-    try:
-        # Convert to pandas datetime then to Python date
-        parsed_date = pd.to_datetime(date_value, errors='coerce')
-        if not pd.isna(parsed_date):
-            return parsed_date.date()
-    except Exception:
-        pass
-    return None
+    profile = profile_repo.get_profile_by_username(username)
+    if not profile or not profile.is_active:
+        raise HTTPException(status_code=404, detail="Profile not found")
 
-def _parse_rewatch_status(rewatch_value):
-    """Parse rewatch status from various formats (Yes/No, True/False, 1/0)"""
-    if not rewatch_value:
-        return False
-    
-    if isinstance(rewatch_value, bool):
-        return rewatch_value
-    
-    if isinstance(rewatch_value, (int, float)):
-        return bool(rewatch_value)
-    
-    # Handle string values
-    rewatch_str = str(rewatch_value).lower().strip()
-    return rewatch_str in ['yes', 'true', '1', 'y']
+    if profile.scraping_status != "completed":
+        raise HTTPException(status_code=404, detail="Profile has no public data yet")
+
+    all_entries = rating_repo.get_ratings_by_profile(profile.id)
+    total_films = len(all_entries)
+    rated_films = len([entry for entry in all_entries if entry.rating is not None and entry.rating > 0])
+    liked_films = len([entry for entry in all_entries if entry.is_liked])
+    avg_rating = _safe_json_float(profile.avg_rating, 0.0)
+
+    return {
+        "username": profile.username,
+        "total_films": total_films,
+        "rated_films": rated_films,
+        "liked_films": liked_films,
+        "avg_rating": avg_rating,
+        "total_reviews": profile.total_reviews or 0,
+        "profile_image_url": profile.profile_image_url,
+        "bio": profile.bio,
+        "location": profile.location,
+        "website": profile.website,
+        "last_scraped_at": profile.last_scraped_at.isoformat() if profile.last_scraped_at else None,
+    }
 
 def extract_zip_file(uploaded_file, temp_dir):
     """Extract uploaded zip file to temporary directory"""
@@ -309,10 +242,12 @@ def extract_zip_file(uploaded_file, temp_dir):
 
 # Profile Management Endpoints
 @app.get("/profiles/")
-async def list_profiles(db: Session = Depends(get_db)):
+async def list_profiles(
+    db: Session = Depends(get_db),
+    _user: ClerkUser = Depends(get_current_user),
+):
     """Get all active profiles with their basic information"""
     profile_repo = ProfileRepository(db)
-    analytics_repo = AnalyticsRepository(db)
     
     profiles = profile_repo.get_all_profiles(active_only=True)
     
@@ -343,7 +278,10 @@ async def list_profiles(db: Session = Depends(get_db)):
     return {"profiles": profile_list}
 
 @app.get("/api/dashboard/analytics")
-async def get_consolidated_dashboard_analytics(db: Session = Depends(get_db)):
+async def get_consolidated_dashboard_analytics(
+    db: Session = Depends(get_db),
+    _user: ClerkUser = Depends(get_current_user),
+):
     """Get consolidated system-wide analytics for the main dashboard."""
     analytics_repo = AnalyticsRepository(db)
     rating_repo = RatingRepository(db)
@@ -369,7 +307,11 @@ async def get_consolidated_dashboard_analytics(db: Session = Depends(get_db)):
     }
 
 @app.get("/profiles/{username}/analysis")
-async def get_analysis(username: str, db: Session = Depends(get_db)):
+async def get_analysis(
+    username: str,
+    db: Session = Depends(get_db),
+    _user: ClerkUser = Depends(get_current_user),
+):
     """Get detailed analysis for a specific profile"""
     profile_repo = ProfileRepository(db)
     rating_repo = RatingRepository(db)
@@ -405,7 +347,7 @@ async def get_analysis(username: str, db: Session = Depends(get_db)):
         "total_films": total_films,
         "rated_films": rated_films,
         "liked_films": liked_films,
-        "avg_rating": profile.avg_rating,
+        "avg_rating": _safe_json_float(profile.avg_rating, 0.0),
         "total_reviews": profile.total_reviews,
         "join_date": profile.join_date.isoformat() if profile.join_date else None,
         "last_scraped_at": profile.last_scraped_at.isoformat() if profile.last_scraped_at else None,
@@ -417,7 +359,7 @@ async def get_analysis(username: str, db: Session = Depends(get_db)):
             {
                 "movie_title": r.movie_title,
                 "movie_year": r.movie_year,
-                "rating": r.rating,
+                "rating": _safe_json_float(r.rating),
                 "watched_date": r.watched_date.isoformat() if r.watched_date else None,
                 "is_rewatch": r.is_rewatch
             } for r in recent_ratings
@@ -426,7 +368,7 @@ async def get_analysis(username: str, db: Session = Depends(get_db)):
             {
                 "movie_title": r.movie_title,
                 "movie_year": r.movie_year,
-                "rating": r.rating,
+                "rating": _safe_json_float(r.rating),
                 "review_text": r.review_text[:200] + "..." if r.review_text and len(r.review_text) > 200 else r.review_text,
                 "published_date": r.published_date.isoformat() if r.published_date else None,
                 "likes_count": r.likes_count
@@ -437,7 +379,7 @@ async def get_analysis(username: str, db: Session = Depends(get_db)):
                 "movie_title": r.movie_title,
                 "movie_year": r.movie_year,
                 "watched_date": r.watched_date.isoformat() if r.watched_date else None,
-                "rating": r.rating,
+                "rating": _safe_json_float(r.rating),
                 "is_rewatch": r.is_rewatch
             } for r in recent_watching_sorted
         ]
@@ -446,7 +388,11 @@ async def get_analysis(username: str, db: Session = Depends(get_db)):
     return analysis
 
 @app.post("/profiles/create")
-async def create_profile(profile_data: ProfileCreate, db: Session = Depends(get_db)):
+async def create_profile(
+    profile_data: ProfileCreate,
+    db: Session = Depends(get_db),
+    _user: ClerkUser = Depends(get_current_user),
+):
     """Create a new profile"""
     profile_repo = ProfileRepository(db)
     
@@ -465,7 +411,12 @@ async def create_profile(profile_data: ProfileCreate, db: Session = Depends(get_
     return {"message": f"Profile created for {profile_data.username}", "profile": profile.to_dict()}
 
 @app.put("/profiles/{username}")
-async def update_profile(username: str, profile_data: ProfileUpdate, db: Session = Depends(get_db)):
+async def update_profile(
+    username: str,
+    profile_data: ProfileUpdate,
+    db: Session = Depends(get_db),
+    _user: ClerkUser = Depends(get_current_user),
+):
     """Update an existing profile"""
     profile_repo = ProfileRepository(db)
     
@@ -480,7 +431,11 @@ async def update_profile(username: str, profile_data: ProfileUpdate, db: Session
     return {"message": f"Profile updated for {username}", "profile": updated_profile.to_dict()}
 
 @app.delete("/profiles/{username}")
-async def delete_profile(username: str, db: Session = Depends(get_db)):
+async def delete_profile(
+    username: str,
+    db: Session = Depends(get_db),
+    _user: ClerkUser = Depends(get_current_user),
+):
     """Delete a profile and all associated data"""
     profile_repo = ProfileRepository(db)
     
@@ -503,11 +458,13 @@ async def delete_profile(username: str, db: Session = Depends(get_db)):
 
 # File Upload Endpoints
 @app.post("/upload/")
-async def upload_files(files: List[UploadFile] = File(...), db: Session = Depends(get_db)):
+async def upload_files(
+    files: List[UploadFile] = File(...),
+    db: Session = Depends(get_db),
+    _user: ClerkUser = Depends(get_current_user),
+):
     """Upload multiple ZIP files containing Letterboxd data"""
     profile_repo = ProfileRepository(db)
-    rating_repo = RatingRepository(db)
-    review_repo = ReviewRepository(db)
     
     loaded_profiles = []
     errors = []
@@ -524,8 +481,8 @@ async def upload_files(files: List[UploadFile] = File(...), db: Session = Depend
                 
                 profile_path = extract_zip_file(file, temp_dir)
                 
-                # Load profile using analyzer
-                analyzer_profile = analyzer.load_profile(profile_path, username)
+                # Load profile data from extracted CSVs
+                analyzer_profile = load_profile_data(profile_path, username)
                 
                 # Create or update profile in database
                 existing_profile = profile_repo.get_profile_by_username(username)
@@ -568,7 +525,11 @@ async def upload_files(files: List[UploadFile] = File(...), db: Session = Depend
 
 # Enhanced Scraper Endpoints
 @app.post("/scrape/profile/{username}")
-async def scrape_profile(username: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+async def scrape_profile(
+    username: str,
+    db: Session = Depends(get_db),
+    _user: ClerkUser = Depends(get_current_user),
+):
     """Start scraping a Letterboxd profile."""
     profile_repo = ProfileRepository(db)
     job_repo = ScrapingJobRepository(db)
@@ -580,7 +541,7 @@ async def scrape_profile(username: str, background_tasks: BackgroundTasks, db: S
     
     # Check for existing active job
     existing_job = job_repo.get_job_by_profile(profile.id)
-    if existing_job and existing_job.status == "in_progress":
+    if existing_job and existing_job.status in ["queued", "in_progress"]:
         raise HTTPException(status_code=409, detail="Scraping already in progress for this user.")
     
     # Create new scraping job
@@ -589,91 +550,28 @@ async def scrape_profile(username: str, background_tasks: BackgroundTasks, db: S
     # Update profile status
     profile_repo.update_profile(profile.id, scraping_status="queued")
     
-    # Start background scraping task
-    background_tasks.add_task(run_scraping_task, job.id, username, db)
-    
+    try:
+        queued_task = _enqueue_scrape_task(job.id, username)
+    except Exception as exc:
+        enqueue_error = _format_enqueue_error(exc)
+        job_repo.update_job_status(job.id, "failed", "Failed to enqueue scraping task", 0.0, enqueue_error)
+        profile_repo.update_profile(profile.id, scraping_status="error")
+        raise HTTPException(status_code=503, detail=f"Failed to enqueue scraping task: {enqueue_error}") from exc
+
     return {
         "message": f"Started scraping profile for {username}",
         "job_id": job.id,
+        "task_id": queued_task.id,
         "status": "queued",
         "check_status_url": f"/scrape/status/{username}"
     }
 
-async def run_scraping_task(job_id: int, username: str, db: Session):
-    """Background task to run the scraping process."""
-    profile_repo = ProfileRepository(db)
-    job_repo = ScrapingJobRepository(db)
-    rating_repo = RatingRepository(db)
-    review_repo = ReviewRepository(db)
-    
-    try:
-        # Update job status
-        job_repo.update_job_status(job_id, "in_progress", "Initializing scraper...", 0.0)
-        
-        profile = profile_repo.get_profile_by_username(username)
-        profile_repo.update_profile(profile.id, scraping_status="in_progress")
-        
-        # Create temporary directory for this scraping session
-        with tempfile.TemporaryDirectory() as temp_dir:
-            scraper_output_dir = os.path.join(temp_dir, f"{username}_data")
-            
-            # Initialize scraper
-            scraper = EnhancedLetterboxdScraper(username, scraper_output_dir, debug=False)
-            
-            # Run comprehensive scraping with progress updates
-            job_repo.update_job_status(job_id, "in_progress", "Scraping profile data...", 10.0)
-            scraper.scrape_profile_info()
-            
-            job_repo.update_job_status(job_id, "in_progress", "Scraping all films...", 25.0)
-            scraper.scrape_all_films()
-            
-            job_repo.update_job_status(job_id, "in_progress", "Scraping diary entries...", 40.0)
-            scraper.scrape_diary_entries()
-            
-            job_repo.update_job_status(job_id, "in_progress", "Scraping reviews...", 55.0)
-            scraper.scrape_reviews()
-            
-            job_repo.update_job_status(job_id, "in_progress", "Scraping watchlist...", 70.0)
-            scraper.scrape_watchlist()
-            
-            job_repo.update_job_status(job_id, "in_progress", "Scraping custom lists...", 80.0)
-            scraper.scrape_custom_lists()
-            
-            job_repo.update_job_status(job_id, "in_progress", "Saving data...", 90.0)
-            scraper.save_all_data()
-            
-            # Load the scraped data into our analyzer
-            job_repo.update_job_status(job_id, "in_progress", "Processing data...", 95.0)
-            analyzer_profile = analyzer.load_profile(scraper_output_dir, username)
-            
-            # Update profile with new data
-            profile_repo.update_profile(
-                profile.id,
-                avg_rating=analyzer_profile.avg_rating,
-                total_reviews=analyzer_profile.total_reviews,
-                join_date=analyzer_profile.join_date,
-                last_scraped_at=datetime.utcnow(),
-                scraping_status="completed"
-            )
-            
-            # Use unified data loader to prevent duplicates
-            movies_loaded = unified_data_loader(analyzer_profile, profile.id, db)
-            print(f"Loaded {movies_loaded} movies for {username} via scraping")
-            
-            # Copy data to permanent location
-            permanent_dir = os.path.join(SCRAPED_DATA_DIR, username)
-            os.makedirs(permanent_dir, exist_ok=True)
-            shutil.copytree(scraper_output_dir, permanent_dir, dirs_exist_ok=True)
-            
-            # Update final job status
-            job_repo.update_job_status(job_id, "completed", "Scraping completed successfully!", 100.0)
-            
-    except Exception as e:
-        job_repo.update_job_status(job_id, "failed", f"Error occurred: {str(e)}", 0.0, str(e))
-        profile_repo.update_profile(profile.id, scraping_status="error")
-
 @app.get("/scrape/status/{username}")
-async def get_scraping_status(username: str, db: Session = Depends(get_db)):
+async def get_scraping_status(
+    username: str,
+    db: Session = Depends(get_db),
+    _user: ClerkUser = Depends(get_current_user),
+):
     """Get the current scraping status for a user."""
     profile_repo = ProfileRepository(db)
     job_repo = ScrapingJobRepository(db)
@@ -699,8 +597,254 @@ async def get_scraping_status(username: str, db: Session = Depends(get_db)):
         "error_message": job.error_message
     }
 
+
+@app.get("/scrape/jobs")
+async def list_scrape_jobs(
+    limit: int = Query(default=50, ge=1, le=200),
+    stale_only: bool = Query(default=False),
+    db: Session = Depends(get_db),
+    _user: ClerkUser = Depends(get_current_user),
+):
+    """List recent scraping jobs with queue/stale metadata."""
+    job_repo = ScrapingJobRepository(db)
+    rows = job_repo.get_recent_jobs_with_profile(limit=limit)
+
+    jobs = []
+    for job, username in rows:
+        serialized = _serialize_scrape_job(job, username=username, stale_minutes=SCRAPE_STALE_JOB_MINUTES)
+        if stale_only and not serialized["is_stale"]:
+            continue
+        jobs.append(serialized)
+
+    counts = {
+        "total": len(jobs),
+        "queued": len([job for job in jobs if job["status"] == "queued"]),
+        "in_progress": len([job for job in jobs if job["status"] == "in_progress"]),
+        "completed": len([job for job in jobs if job["status"] == "completed"]),
+        "failed": len([job for job in jobs if job["status"] == "failed"]),
+        "stale": len([job for job in jobs if job["is_stale"]]),
+    }
+
+    return {
+        "jobs": jobs,
+        "counts": counts,
+        "stale_threshold_minutes": SCRAPE_STALE_JOB_MINUTES,
+        "generated_at": datetime.utcnow().isoformat(),
+    }
+
+
+@app.post("/scrape/jobs/{job_id}/retry")
+async def retry_scrape_job(
+    job_id: int,
+    db: Session = Depends(get_db),
+    _user: ClerkUser = Depends(get_current_user),
+):
+    """Create a fresh scrape job for the same profile and enqueue it."""
+    job_repo = ScrapingJobRepository(db)
+    profile_repo = ProfileRepository(db)
+
+    original_job = job_repo.get_job_by_id(job_id)
+    if not original_job:
+        raise HTTPException(status_code=404, detail="Scraping job not found")
+
+    profile = profile_repo.get_profile_by_id(original_job.profile_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Profile for scraping job not found")
+
+    active_jobs = job_repo.get_active_jobs_for_profile(profile.id, exclude_job_id=original_job.id)
+    if active_jobs:
+        raise HTTPException(status_code=409, detail="An active scraping job already exists for this profile")
+
+    new_retry_count = (original_job.retry_count or 0) + 1
+    new_job = job_repo.create_job(
+        profile.id,
+        job_type=original_job.job_type or "full_scrape",
+        status="queued",
+        retry_count=new_retry_count,
+    )
+    profile_repo.update_profile(profile.id, scraping_status="queued")
+
+    try:
+        queued_task = _enqueue_scrape_task(new_job.id, profile.username)
+    except Exception as exc:
+        enqueue_error = _format_enqueue_error(exc)
+        job_repo.update_job_status(
+            new_job.id,
+            "failed",
+            "Failed to enqueue retry task",
+            0.0,
+            enqueue_error,
+        )
+        profile_repo.update_profile(profile.id, scraping_status="error")
+        raise HTTPException(status_code=503, detail=f"Failed to enqueue retry task: {enqueue_error}") from exc
+
+    return {
+        "message": f"Retry queued for {profile.username}",
+        "job": _serialize_scrape_job(new_job, username=profile.username, stale_minutes=SCRAPE_STALE_JOB_MINUTES),
+        "task_id": queued_task.id,
+    }
+
+
+@app.post("/scrape/jobs/{job_id}/cancel")
+async def cancel_scrape_job(
+    job_id: int,
+    db: Session = Depends(get_db),
+    _user: ClerkUser = Depends(get_current_user),
+):
+    """Mark an active scraping job as failed to unblock the queue from UI."""
+    job_repo = ScrapingJobRepository(db)
+    profile_repo = ProfileRepository(db)
+
+    job = job_repo.get_job_by_id(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Scraping job not found")
+
+    if job.status not in ["queued", "in_progress"]:
+        raise HTTPException(status_code=409, detail="Only queued/in-progress jobs can be cancelled")
+
+    job_repo.update_job_status(
+        job.id,
+        "failed",
+        "Cancelled from UI",
+        job.progress_percentage if job.progress_percentage is not None else 0.0,
+        "Cancelled manually from scraper dashboard",
+    )
+
+    profile = profile_repo.get_profile_by_id(job.profile_id)
+    if profile:
+        remaining_active_jobs = job_repo.get_active_jobs_for_profile(profile.id, exclude_job_id=job.id)
+        if not remaining_active_jobs:
+            profile_repo.update_profile(profile.id, scraping_status="pending")
+
+    updated = job_repo.get_job_by_id(job.id)
+    username = profile.username if profile else "unknown"
+    return {
+        "message": f"Cancelled scraping job {job.id}",
+        "job": _serialize_scrape_job(updated, username=username, stale_minutes=SCRAPE_STALE_JOB_MINUTES) if updated else None,
+    }
+
+
+@app.post("/scrape/jobs/reset-stale")
+async def reset_stale_scrape_jobs(
+    stale_minutes: int = Query(default=SCRAPE_STALE_JOB_MINUTES, ge=1, le=720),
+    db: Session = Depends(get_db),
+    _user: ClerkUser = Depends(get_current_user),
+):
+    """Mark stale queued/in-progress jobs as failed to recover from worker crashes."""
+    job_repo = ScrapingJobRepository(db)
+    profile_repo = ProfileRepository(db)
+
+    active_jobs = job_repo.get_active_jobs()
+    reset_jobs = []
+
+    for job in active_jobs:
+        if not _is_job_stale(job, stale_minutes):
+            continue
+
+        profile = profile_repo.get_profile_by_id(job.profile_id)
+        username = profile.username if profile else f"profile:{job.profile_id}"
+
+        job_repo.update_job_status(
+            job.id,
+            "failed",
+            "Marked stale and reset from UI",
+            job.progress_percentage if job.progress_percentage is not None else 0.0,
+            f"Job exceeded stale threshold ({stale_minutes}m)",
+        )
+
+        if profile:
+            remaining_active_jobs = job_repo.get_active_jobs_for_profile(profile.id, exclude_job_id=job.id)
+            if not remaining_active_jobs:
+                profile_repo.update_profile(profile.id, scraping_status="pending")
+
+        refreshed = job_repo.get_job_by_id(job.id)
+        if refreshed:
+            reset_jobs.append(_serialize_scrape_job(refreshed, username=username, stale_minutes=stale_minutes))
+
+    return {
+        "message": f"Reset {len(reset_jobs)} stale jobs",
+        "reset_count": len(reset_jobs),
+        "stale_threshold_minutes": stale_minutes,
+        "jobs": reset_jobs,
+    }
+
+
+@app.get("/scrape/progress/{job_id}/stream")
+async def stream_scrape_progress(job_id: int, request: Request, db: Session = Depends(get_db)):
+    """
+    Stream scraping progress updates for a specific job via Server-Sent Events.
+    """
+    job_repo = ScrapingJobRepository(db)
+    initial_job = job_repo.get_job_by_id(job_id)
+    if not initial_job:
+        raise HTTPException(status_code=404, detail="Scraping job not found")
+
+    async def event_generator():
+        deadline = datetime.utcnow() + timedelta(seconds=SSE_PROGRESS_TIMEOUT_SECONDS)
+        last_payload = None
+
+        while True:
+            if await request.is_disconnected():
+                break
+
+            db.expire_all()
+            job = job_repo.get_job_by_id(job_id)
+            if not job:
+                payload = {
+                    "id": job_id,
+                    "status": "failed",
+                    "progress_message": "Scraping job not found",
+                    "progress_percentage": 0.0,
+                    "error_message": "Job no longer exists",
+                    "done": True,
+                }
+                yield f"data: {json.dumps(payload)}\n\n"
+                break
+
+            payload = {
+                "id": job.id,
+                "status": job.status,
+                "progress_message": job.progress_message,
+                "progress_percentage": job.progress_percentage,
+                "started_at": job.started_at.isoformat() if job.started_at else None,
+                "error_message": job.error_message,
+                "done": job.status in ["completed", "failed"],
+            }
+
+            if payload != last_payload:
+                yield f"data: {json.dumps(payload)}\n\n"
+                last_payload = payload
+
+            if payload["done"]:
+                break
+
+            if datetime.utcnow() >= deadline:
+                timeout_payload = {
+                    **payload,
+                    "progress_message": payload.get("progress_message") or "Progress stream timeout",
+                    "timeout": True,
+                    "done": True,
+                }
+                yield f"data: {json.dumps(timeout_payload)}\n\n"
+                break
+
+            await asyncio.sleep(SSE_PROGRESS_POLL_INTERVAL_SECONDS)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
 @app.get("/scrape/available")
-async def get_available_profiles(db: Session = Depends(get_db)):
+async def get_available_profiles(
+    db: Session = Depends(get_db),
+    _user: ClerkUser = Depends(get_current_user),
+):
     """Get all available scraped profiles."""
     profile_repo = ProfileRepository(db)
     profiles = profile_repo.get_all_profiles(active_only=True)
@@ -716,14 +860,21 @@ async def get_available_profiles(db: Session = Depends(get_db)):
     return {"available_profiles": available_profiles}
 
 @app.delete("/scrape/{username}")
-async def clear_scraped_data(username: str, db: Session = Depends(get_db)):
+async def clear_scraped_data(
+    username: str,
+    db: Session = Depends(get_db),
+    _user: ClerkUser = Depends(get_current_user),
+):
     """Clear scraped data for a user - alias for /profiles/{username}/data"""
-    return await clear_profile_data(username, db)
+    return await clear_profile_data(username, db, _user)
 
 # Analytics and Dashboard Endpoints
 
 @app.get("/profiles/suggestions/update")
-async def get_update_suggestions(db: Session = Depends(get_db)):
+async def get_update_suggestions(
+    db: Session = Depends(get_db),
+    _user: ClerkUser = Depends(get_current_user),
+):
     """Get profiles that need updating"""
     profile_repo = ProfileRepository(db)
     profiles_needing_update = profile_repo.get_profiles_requiring_update(hours=24)
@@ -740,7 +891,11 @@ async def get_update_suggestions(db: Session = Depends(get_db)):
     }
 
 @app.delete("/profiles/{username}/data")
-async def clear_profile_data(username: str, db: Session = Depends(get_db)):
+async def clear_profile_data(
+    username: str,
+    db: Session = Depends(get_db),
+    _user: ClerkUser = Depends(get_current_user),
+):
     """Clear scraped data for a user."""
     profile_repo = ProfileRepository(db)
     
@@ -766,13 +921,20 @@ async def clear_profile_data(username: str, db: Session = Depends(get_db)):
 
 # Analysis Endpoints (required by frontend)
 @app.get("/analysis/comparative")
-async def get_comparative_analysis(usernames: str = "", db: Session = Depends(get_db)):
+async def get_comparative_analysis(
+    usernames: List[str] = Query(default=[]),
+    db: Session = Depends(get_db),
+    _user: ClerkUser = Depends(get_current_user),
+):
     """Get comparative analysis between multiple profiles"""
     if not usernames:
         raise HTTPException(status_code=400, detail="usernames parameter is required")
     
-    # Parse usernames from query parameter (comma-separated or multiple params)
-    username_list = [u.strip() for u in usernames.split(',') if u.strip()]
+    # Support both ?usernames=a,b and ?usernames=a&usernames=b forms.
+    username_list: List[str] = []
+    for raw_value in usernames:
+        username_list.extend([value.strip() for value in raw_value.split(",") if value.strip()])
+    username_list = list(dict.fromkeys(username_list))
     
     if len(username_list) < 2:
         raise HTTPException(status_code=400, detail="At least 2 usernames required for comparison")
@@ -797,7 +959,7 @@ async def get_comparative_analysis(usernames: str = "", db: Session = Depends(ge
                 {
                     "movie_title": r.movie_title,
                     "movie_year": r.movie_year,
-                    "rating": r.rating,
+                    "rating": _safe_json_float(r.rating),
                     "watched_date": r.watched_date.isoformat() if r.watched_date else None
                 } for r in ratings[:10]
             ]
@@ -819,7 +981,11 @@ async def get_comparative_analysis(usernames: str = "", db: Session = Depends(ge
     return comparison_result
 
 @app.get("/analysis/recommendations/{username}")
-async def get_recommendations(username: str, db: Session = Depends(get_db)):
+async def get_recommendations(
+    username: str,
+    db: Session = Depends(get_db),
+    _user: ClerkUser = Depends(get_current_user),
+):
     """Get movie recommendations for a specific profile"""
     profile_repo = ProfileRepository(db)
     rating_repo = RatingRepository(db)
@@ -846,7 +1012,7 @@ async def get_recommendations(username: str, db: Session = Depends(get_db)):
         "username": username,
         "user_stats": {
             "total_movies": len(user_ratings),
-            "avg_rating": profile.avg_rating,
+            "avg_rating": _safe_json_float(profile.avg_rating, 0.0),
             "favorite_genres": []  # Could be enhanced with genre analysis
         },
         "recommendations": recommendations,

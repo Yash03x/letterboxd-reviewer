@@ -101,7 +101,6 @@ const Dashboard: React.FC = () => {
 
   // Calculate completion rate based on profile statuses
   const activeProfiles = profilesArray.filter(p => p.scraping_status === 'completed').length;
-  const completionRate = totalProfiles > 0 ? (activeProfiles / totalProfiles) * 100 : 0;
   
   // Use analytics data directly
   const aggregateRatingDistribution = analytics?.rating_distribution ?? {};
@@ -174,7 +173,6 @@ const Dashboard: React.FC = () => {
           value={totalProfiles}
           subtitle="Active community members"
           icon={Users}
-          trend={{ value: 12.5, isPositive: true }}
           delay={0}
         />
         
@@ -183,7 +181,6 @@ const Dashboard: React.FC = () => {
           value={totalMovies}
           subtitle="Across all profiles"
           icon={Film}
-          trend={{ value: 8.3, isPositive: true }}
           gradient="from-blue-500/20 to-blue-600/10"
           delay={0.1}
         />
@@ -193,7 +190,6 @@ const Dashboard: React.FC = () => {
           value={totalReviews}
           subtitle="Community insights"
           icon={MessageCircle}
-          trend={{ value: 15.2, isPositive: true }}
           gradient="from-purple-500/20 to-purple-600/10"
           delay={0.2}
         />
@@ -201,9 +197,8 @@ const Dashboard: React.FC = () => {
         <StatsCard
           title="Average Rating"
           value={avgRating.toFixed(1)}
-          subtitle={`${completionRate.toFixed(0)}% completion rate`}
+          subtitle={`${activeProfiles} profiles completed`}
           icon={Star}
-          trend={{ value: 2.1, isPositive: true }}
           gradient="from-yellow-500/20 to-yellow-600/10"
           delay={0.3}
         />

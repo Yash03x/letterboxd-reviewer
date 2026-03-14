@@ -1,0 +1,15 @@
+.git
+.github
+.venv
+backend/venv
+frontend/node_modules
+frontend/.next
+data/scraped
+data/exports
+data/backups
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.DS_Store
+.env

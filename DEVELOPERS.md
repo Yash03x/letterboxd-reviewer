@@ -42,14 +42,14 @@ graph TD
             B_Endpoints["API Endpoints (main.py)"]
 
             subgraph "Core Logic"
-                B_Analyzer["Analyzer (analyzer.py)"]
+                B_Ingest["Profile Loader (services/profile_loader.py)"]
                 B_Scraper["Scraper (scraper.py)"]
                 B_BGTasks["Background Tasks"]
             end
 
             B_Endpoints -- "Triggers" --> B_BGTasks
             B_BGTasks -- "Runs" --> B_Scraper
-            B_Endpoints -- "Uses" --> B_Analyzer
+            B_Endpoints -- "Uses" --> B_Ingest
         end
 
         subgraph "Database (SQLite)"
@@ -74,7 +74,7 @@ graph TD
     D_Repo -- "5. Writes to DB" --> D_ORM
     U_Analysis -- "6. GET /api/profiles/{user}/analysis" --> B_Endpoints
     B_Endpoints -- "7. Gets data from DB" --> D_Repo
-    B_Endpoints -- "8. Analyzes data" --> B_Analyzer
+    B_Endpoints -- "8. Ingests parsed CSV data" --> B_Ingest
     B_Endpoints -- "9. Returns analysis" --> U_Analysis
     U_Analysis -- "10. Renders charts" --> C_Charts
 ```
@@ -97,10 +97,11 @@ The backend is responsible for the core logic of the application.
 
 ```
 backend/
-├── config/         # Configuration (settings, prompts)
+├── config/         # Configuration (settings)
 ├── core/           # Business logic (analysis, recommendations)
 ├── database/       # Database connection, models, and repository
 ├── main.py         # FastAPI app entry point, API endpoints
+├── services/       # CSV profile loading and scrape orchestration
 ├── scraper.py      # Logic for scraping data from Letterboxd
 └── letterboxd.db   # SQLite database file
 ```
@@ -129,7 +130,7 @@ All endpoints are defined in `main.py`. The main endpoints are:
 
 ### 2.5. Data Analysis
 
--   **Analyzer**: The `core/analyzer.py` file contains the logic for analyzing the scraped data. It calculates statistics like rating distribution, activity by year, and more.
+-   **Ingestion/Stats**: Scraped CSV data is parsed in `services/profile_loader.py` and persisted via repository methods. Analysis endpoints read computed stats from the database.
 -   **Recommendations**: The `core/recommendations.py` file can be used to generate film recommendations based on the user's data.
 
 ---
@@ -188,16 +189,17 @@ frontend/
 ### 4.1. Setup
 
 1.  **Clone the repository**.
-2.  Run `./scripts/setup.sh` to install dependencies for both frontend and backend.
+2.  Create a Python virtualenv, install `requirements.txt`, install frontend dependencies with `npm install`, and copy env files from `.env.example` and `frontend/.env.example`.
 
 ### 4.2. Running the Application
 
--   Run `./scripts/start-all.sh` to start both the backend and frontend servers concurrently.
--   Alternatively, run `./scripts/start-backend.sh` and `./scripts/start-frontend.sh` in separate terminals.
+-   Start the API with `uvicorn main:app --reload --port 8000` from the `backend/` directory.
+-   Start the worker with `celery -A celery_app.celery_app worker --loglevel=info --pool=solo` from `backend/`.
+-   Start the frontend with `npm run dev` from `frontend/`.
 
 ### 4.3. Testing
 
--   The `scripts/test_functionality.py` script can be used to run integration tests against the backend API.
+-   Run API integration checks directly against local endpoints (for example via `curl` or your preferred API client).
 
 ---
 

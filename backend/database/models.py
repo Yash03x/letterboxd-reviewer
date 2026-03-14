@@ -1,11 +1,24 @@
+import math
 from sqlalchemy import Column, Integer, String, DateTime, Text, Float, Boolean, ForeignKey, Date, JSON, UniqueConstraint
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import declarative_base
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from datetime import datetime
 from typing import Optional, Dict, Any
 
 Base = declarative_base()
+
+
+def _safe_float(value, default: Optional[float] = None) -> Optional[float]:
+    if value is None:
+        return default
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return default
+    if not math.isfinite(numeric):
+        return default
+    return numeric
 
 class Profile(Base):
     __tablename__ = "profiles"
@@ -43,7 +56,7 @@ class Profile(Base):
             "id": self.id,
             "username": self.username,
             # total_movies removed - use calculated total_films instead
-            "avg_rating": self.avg_rating,
+            "avg_rating": _safe_float(self.avg_rating, 0.0),
             "total_reviews": self.total_reviews,
             "join_date": self.join_date.isoformat() if self.join_date else None,
             "last_scraped_at": self.last_scraped_at.isoformat() if self.last_scraped_at else None,

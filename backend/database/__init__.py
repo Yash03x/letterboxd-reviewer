@@ -1,7 +1,14 @@
 """
 Database package initialization
 """
-from .connection import engine, SessionLocal, get_db, init_db, create_tables
+from .connection import (
+    DATABASE_URL,
+    SessionLocal,
+    engine,
+    get_database_url,
+    get_db,
+    init_db,
+)
 from .models import Profile, Rating, Review, MovieList, ScrapingJob, SystemMetrics
 from .repository import (
     ProfileRepository, 
@@ -12,7 +19,7 @@ from .repository import (
 )
 
 __all__ = [
-    'engine', 'SessionLocal', 'get_db', 'init_db', 'create_tables',
+    'DATABASE_URL', 'engine', 'SessionLocal', 'get_db', 'get_database_url', 'init_db',
     'Profile', 'Rating', 'Review', 'MovieList', 'ScrapingJob', 'SystemMetrics',
     'ProfileRepository', 'RatingRepository', 'ReviewRepository', 
     'ScrapingJobRepository', 'AnalyticsRepository'

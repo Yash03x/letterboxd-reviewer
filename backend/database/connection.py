@@ -1,29 +1,57 @@
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker, Session
-from sqlalchemy.ext.declarative import declarative_base
 import os
+from pathlib import Path
 from typing import Generator
 
-# Database configuration
-# Use absolute path for database to avoid path issues
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DEFAULT_DB_PATH = os.path.join(BASE_DIR, "..", "data", "letterboxd_analyzer.db")
-DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{DEFAULT_DB_PATH}")
+from dotenv import load_dotenv
+from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.engine import Engine
+from sqlalchemy.orm import Session, sessionmaker
 
-# Create engine
-if DATABASE_URL.startswith("sqlite"):
-    engine = create_engine(
-        DATABASE_URL, 
-        connect_args={"check_same_thread": False},  # Only needed for SQLite
-        echo=False  # Set to True for SQL debugging
-    )
-else:
-    engine = create_engine(DATABASE_URL, echo=False)
+REPO_ROOT = Path(__file__).resolve().parents[2]
+BACKEND_DIR = REPO_ROOT / "backend"
 
-# Create SessionLocal class
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+# Support both the repo-level .env described in the docs and the older backend/.env.
+load_dotenv(REPO_ROOT / ".env")
+load_dotenv(BACKEND_DIR / ".env", override=False)
 
-# Database dependency for FastAPI
+
+def get_database_url() -> str:
+    database_url = os.getenv("DATABASE_URL")
+    if not database_url:
+        raise RuntimeError(
+            "DATABASE_URL is required. Example: postgresql+psycopg://localhost/spyboxd"
+        )
+
+    if database_url.startswith("postgres://"):
+        database_url = database_url.replace("postgres://", "postgresql://", 1)
+    if database_url.startswith("postgresql://") and not database_url.startswith("postgresql+"):
+        database_url = database_url.replace("postgresql://", "postgresql+psycopg://", 1)
+    if database_url.startswith("sqlite"):
+        raise RuntimeError(
+            "SQLite runtime is no longer supported. "
+            "Use PostgreSQL and the import utility for legacy SQLite data."
+        )
+
+    return database_url
+
+
+DATABASE_URL = get_database_url()
+
+
+def _create_engine() -> Engine:
+    engine_kwargs = {"echo": False, "future": True, "pool_pre_ping": True}
+    return create_engine(DATABASE_URL, **engine_kwargs)
+
+
+engine = _create_engine()
+SessionLocal = sessionmaker(
+    autocommit=False,
+    autoflush=False,
+    expire_on_commit=False,
+    bind=engine,
+)
+
+
 def get_db() -> Generator[Session, None, None]:
     db = SessionLocal()
     try:
@@ -31,45 +59,28 @@ def get_db() -> Generator[Session, None, None]:
     finally:
         db.close()
 
-# Create tables (run this once to initialize)
-def create_tables():
+
+def init_db() -> None:
+    """
+    Validate connectivity and surface schema state.
+
+    Schema changes should go through Alembic, not ad-hoc runtime ALTER TABLE calls.
+    """
     from .models import Base
-    Base.metadata.create_all(bind=engine)
 
-def check_and_add_column(table_name: str, column_name: str, column_def: str) -> bool:
-    """Check if column exists and add it if not"""
-    try:
-        with engine.connect() as conn:
-            # Check if column exists
-            result = conn.execute(text(f"PRAGMA table_info({table_name})"))
-            columns = [row[1] for row in result.fetchall()]
-            
-            if column_name not in columns:
-                print(f"Adding {column_name} column to {table_name} table...")
-                conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {column_def}"))
-                conn.commit()
-                print(f"✓ Added {column_name} column successfully!")
-                return True
-            else:
-                print(f"✓ {column_name} column already exists in {table_name}")
-                return True
-    except Exception as e:
-        print(f"Error with {column_name} column: {e}")
-        return False
+    with engine.connect() as connection:
+        connection.execute(text("SELECT 1"))
 
-# Initialize database
-def init_db():
-    """Initialize database with tables"""
-    create_tables()
-    
-    # Run migrations for new columns
-    print("🔄 Running database migrations...")
-    success = check_and_add_column("ratings", "is_liked", "is_liked BOOLEAN DEFAULT 0")
-    
-    if success:
-        print("✅ Database initialized and migrated successfully!")
+    inspector = inspect(engine)
+    existing_tables = set(inspector.get_table_names())
+    application_tables = set(Base.metadata.tables.keys())
+
+    if not existing_tables.intersection(application_tables):
+        print("⚠️  Database is reachable but has no application tables yet.")
+        print("   Run `alembic upgrade head` before using the API.")
     else:
-        print("⚠️  Database initialized but migrations may have issues")
+        print("✅ Database connection verified.")
+
 
 if __name__ == "__main__":
     init_db()
