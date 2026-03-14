@@ -29,7 +29,6 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   }
 
   const description = `${profile.total_films} films watched · ${profile.avg_rating?.toFixed(1)}★ avg · ${profile.total_reviews} reviews`;
-  const ogImage = `/api/og?username=${encodeURIComponent(username)}`;
 
   return {
     title: `${profile.username} on Spyboxd`,
@@ -37,13 +36,6 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     openGraph: {
       title: `${profile.username} on Spyboxd`,
       description,
-      images: [{ url: ogImage, width: 1200, height: 630, alt: `${username}'s Letterboxd stats` }],
-    },
-    twitter: {
-      card: 'summary_large_image',
-      title: `${profile.username} on Spyboxd`,
-      description,
-      images: [ogImage],
     },
   };
 }
@@ -57,7 +49,6 @@ export default async function PublicProfilePage({ params }: Props) {
   return (
     <main className="min-h-screen flex items-center justify-center px-4 py-12">
       <div className="w-full max-w-xl rounded-2xl bg-black/30 backdrop-blur-xl border border-white/10 p-8 space-y-6">
-        {/* Header */}
         <div className="text-center space-y-3">
           {profile.profile_image_url && (
             // eslint-disable-next-line @next/next/no-img-element
@@ -68,15 +59,10 @@ export default async function PublicProfilePage({ params }: Props) {
             />
           )}
           <h1 className="text-2xl font-bold text-white">{profile.username}</h1>
-          {profile.location && (
-            <p className="text-sm text-white/50">{profile.location}</p>
-          )}
-          {profile.bio && (
-            <p className="text-sm text-white/70 max-w-sm mx-auto">{profile.bio}</p>
-          )}
+          {profile.location && <p className="text-sm text-white/50">{profile.location}</p>}
+          {profile.bio && <p className="text-sm text-white/70 max-w-sm mx-auto">{profile.bio}</p>}
         </div>
 
-        {/* Stats grid */}
         <div className="grid grid-cols-3 gap-4 text-center">
           {[
             { label: 'Films', value: profile.total_films?.toLocaleString() ?? '—' },
@@ -90,7 +76,6 @@ export default async function PublicProfilePage({ params }: Props) {
           ))}
         </div>
 
-        {/* Footer CTA */}
         <p className="text-center text-xs text-white/30">
           Powered by{' '}
           <a href="/" className="text-cinema-400 font-medium hover:text-cinema-300 transition-colors">
