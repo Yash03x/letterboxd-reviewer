@@ -28,7 +28,7 @@ interface ScrapingJob {
   progress: string;
   progressPercentage?: number;
   jobId?: number;
-  startTime?: string;
+  startTime?: string | null;
 }
 
 interface ScrapeProgressEvent {
