@@ -5,17 +5,15 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { UserButton, SignInButton, useAuth } from '@clerk/nextjs';
 import { motion, AnimatePresence } from 'framer-motion';
-import { 
-  HomeIcon, 
-  FilmIcon, 
-  ChartBarIcon, 
+import {
+  HomeIcon,
+  ChartBarIcon,
   UserGroupIcon,
   PlayIcon,
 } from '@heroicons/react/24/outline';
 import {
   HomeIcon as HomeIconSolid,
-  FilmIcon as FilmIconSolid,
-  ChartBarIcon as ChartBarIconSolid
+  ChartBarIcon as ChartBarIconSolid,
 } from '@heroicons/react/24/solid';
 
 interface LayoutProps {
@@ -47,14 +45,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       label: 'Profiles',
       icon: UserGroupIcon,
       activeIcon: UserGroupIcon,
-      description: 'Manage Profiles'
-    },
-    {
-      path: '/scraper',
-      label: 'Scraper',
-      icon: FilmIcon,
-      activeIcon: FilmIconSolid,
-      description: 'Data Collection'
+      description: 'Manage & Scrape'
     },
     {
       path: '/analysis',

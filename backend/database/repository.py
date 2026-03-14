@@ -292,9 +292,16 @@ class ScrapingJobRepository:
         )
 
     def get_recent_jobs_with_profile(self, limit: int = 50):
+        # Subquery: latest job id per profile
+        latest_ids = (
+            self.db.query(func.max(ScrapingJob.id).label("max_id"))
+            .group_by(ScrapingJob.profile_id)
+            .subquery()
+        )
         return (
             self.db.query(ScrapingJob, Profile.username)
             .join(Profile, Profile.id == ScrapingJob.profile_id)
+            .filter(ScrapingJob.id.in_(latest_ids))
             .order_by(ScrapingJob.queued_at.desc())
             .limit(limit)
             .all()
