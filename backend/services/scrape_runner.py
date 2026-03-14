@@ -38,28 +38,8 @@ def execute_scrape_job(job_id: int, username: str) -> dict:
             scraper_output_dir = os.path.join(temp_dir, f"{username}_data")
             scraper = EnhancedLetterboxdScraper(username, scraper_output_dir, debug=False)
 
-            # Fail fast for missing/unreachable profiles instead of running every scrape step.
-            profile_probe = scraper.fetch_with_retry(scraper.urls["profile"], max_retries=1)
-            if not profile_probe:
-                raise RuntimeError(f"Letterboxd profile '{username}' could not be fetched.")
-
-            job_repo.update_job_status(job_id, "in_progress", "Scraping profile data...", 10.0)
-            scraper.scrape_profile_info()
-
-            job_repo.update_job_status(job_id, "in_progress", "Scraping all films...", 25.0)
-            scraper.scrape_all_films()
-
-            job_repo.update_job_status(job_id, "in_progress", "Scraping diary entries...", 40.0)
-            scraper.scrape_diary_entries()
-
-            job_repo.update_job_status(job_id, "in_progress", "Scraping reviews...", 55.0)
-            scraper.scrape_reviews()
-
-            job_repo.update_job_status(job_id, "in_progress", "Scraping watchlist...", 70.0)
-            scraper.scrape_watchlist()
-
-            job_repo.update_job_status(job_id, "in_progress", "Scraping custom lists...", 80.0)
-            scraper.scrape_custom_lists()
+            job_repo.update_job_status(job_id, "in_progress", "Scraping via RSS...", 20.0)
+            scraper.scrape_via_rss()
 
             job_repo.update_job_status(job_id, "in_progress", "Saving data...", 90.0)
             scraper.save_all_data()
