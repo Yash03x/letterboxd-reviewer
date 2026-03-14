@@ -1,0 +1,27 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to VPS
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: deploy
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            set -e
+            cd /opt/spyboxd
+            git pull origin main
+            source .venv/bin/activate
+            pip install -r requirements.txt --quiet
+            PYTHONPATH=/opt/spyboxd/backend alembic upgrade head
+            sudo systemctl restart spyboxd-api spyboxd-worker spyboxd-beat
+            echo "Deploy complete"

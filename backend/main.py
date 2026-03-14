@@ -528,9 +528,11 @@ async def upload_files(
 async def scrape_profile(
     username: str,
     db: Session = Depends(get_db),
-    _user: ClerkUser = Depends(get_current_user),
+    user: ClerkUser = Depends(get_current_user),
 ):
-    """Start scraping a Letterboxd profile."""
+    """Start scraping a Letterboxd profile. Requires admin role."""
+    if not user.is_admin:
+        raise HTTPException(status_code=403, detail="Manual scraping requires admin role")
     profile_repo = ProfileRepository(db)
     job_repo = ScrapingJobRepository(db)
     
@@ -637,9 +639,11 @@ async def list_scrape_jobs(
 async def retry_scrape_job(
     job_id: int,
     db: Session = Depends(get_db),
-    _user: ClerkUser = Depends(get_current_user),
+    user: ClerkUser = Depends(get_current_user),
 ):
-    """Create a fresh scrape job for the same profile and enqueue it."""
+    """Create a fresh scrape job for the same profile and enqueue it. Requires admin role."""
+    if not user.is_admin:
+        raise HTTPException(status_code=403, detail="Manual scraping requires admin role")
     job_repo = ScrapingJobRepository(db)
     profile_repo = ProfileRepository(db)
 

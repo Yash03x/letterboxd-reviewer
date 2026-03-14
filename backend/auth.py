@@ -53,6 +53,7 @@ def _get_jwks_client(jwks_url: str) -> PyJWKClient:
 class ClerkUser:
     user_id: str
     session_id: Optional[str]
+    is_admin: bool = False
 
 
 def get_current_user(
@@ -107,7 +108,10 @@ def get_current_user(
             detail="Token missing subject claim",
         )
 
-    return ClerkUser(user_id=user_id, session_id=session_id)
+    metadata = payload.get("public_metadata") or payload.get("publicMetadata") or {}
+    is_admin = bool(metadata.get("is_admin", False))
+
+    return ClerkUser(user_id=user_id, session_id=session_id, is_admin=is_admin)
 
 
 def get_optional_user(
