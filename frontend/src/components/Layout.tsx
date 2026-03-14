@@ -24,10 +24,11 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const pathname = usePathname();
   const { isSignedIn } = useAuth();
   const [isLoaded, setIsLoaded] = useState(false);
-  const [currentTime, setCurrentTime] = useState(new Date());
+  const [currentTime, setCurrentTime] = useState<Date | null>(null);
 
   useEffect(() => {
     setIsLoaded(true);
+    setCurrentTime(new Date());
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
@@ -120,7 +121,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
               />
             </div>
             <div className="text-xs text-white/50">
-              {currentTime.toLocaleTimeString()}
+              {currentTime?.toLocaleTimeString() ?? ''}
             </div>
           </motion.div>
 
