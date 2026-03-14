@@ -1,5 +1,10 @@
+import { Suspense } from 'react';
 import ProfileManager from '../../../views/ProfileManager';
 
 export default function ProfilesPage() {
-  return <ProfileManager />;
+  return (
+    <Suspense>
+      <ProfileManager />
+    </Suspense>
+  );
 }
